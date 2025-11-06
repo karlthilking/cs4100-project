@@ -1,22 +1,45 @@
 from datasets import load_dataset
-import numpy as np
+import pretty_midi as pm
+from typing import Dict, Optional, Union
+import note_seq
+import json
 import time
 
-dataset = load_dataset("roszcz/lakh-lmd-full", split="train[:10000]")
+ds = load_dataset("roszcz/lakh-lmd-full")
+train_ds = ds['train']
 
-num_songs = 0;
-total_notes = 0;
-start_time = time.time();
+print(f"{len(train_ds)} total songs in lakh datatset")
 
-for song in dataset:
-  durations = song['notes']['duration']
-  pitches = song['notes']['pitch']
-  velocities = song['notes']['velocity']
-  for duration, pitch, velocity in zip(durations, pitches, velocities):
-    print(f"Duration: {duration}, Pitch: {pitch}, Velocity: {velocity}")
-    total_notes += 1
-  num_songs += 1
+def parse_midi(file_path: str) -> Dict:
+  dict = {
+    'path' : file_path,
+  }
 
-end_time = time.time();
-total_time = end_time - start_time
-print(f"Total songs: {num_songs}, Total notes: {total_notes}, Total time: {total_time - (total_time % 0.01)}s")
+  try:
+    stream = pm.PrettyMIDI(file_path)
+  except (EOFError, KeyError, ValueError):
+    return
+  
+  try:
+    dict['instrument_names'] = [i.name.strip() for i in stream.instruments]
+  except ValueError:
+    return
+  
+  dict['notes'] = note_seq.midi_file_to_note_sequence(stream)
+  return dict
+
+def parse_filename(filename: str) -> Union[str, None]:
+  try:
+    data = json.loads(filename)
+    return data['filenames'][0]
+  except KeyError:
+    return
+
+filepaths = []
+for i in range(50):
+  info = train_ds[i]['source']
+  filename = parse_filename(info)
+  filepaths.append(filename)
+
+for filename in filepaths:
+  print(f"Filepath: {filename}")

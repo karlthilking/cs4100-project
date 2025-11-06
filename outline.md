@@ -15,7 +15,7 @@ Tools & Libraries:
   - numpy: hmm calculations
   - Music-specific Python Libraries:
     - MusicXML: textual data format for storing music files
-    - music21: can parse MusicXML files, represents music data in a list
+    - music21: can parse MusicXML files, represents music data in a list (noted as being slow)
     - PrettyMIDI: processes MIDI files
 
 Implementation:
