@@ -9,6 +9,10 @@ Academic Resources:
   - https://www.audiolabs-erlangen.de/resources/MIR/FMP/C5/C5S3_Viterbi.html
   - https://www.audiolabs-erlangen.de/resources/MIR/FMP/C1/C1S2_MIDI.html
   - https://www.audiolabs-erlangen.de/resources/MIR/FMP/B/B_PythonAudio.html 
+
+MIDI File Resources:
+  - Key Signature: https://midiprog.com/midi-key-signature/
+  - Setup Messages: https://midiprog.com/midi-setup-messages/
   
 
 Tools & Libraries:
@@ -23,6 +27,10 @@ Tools & Libraries:
   - mnnlearn
   - mido: for working with MIDI files
   - note_seq
+
+  - LMMS Studio (free version): creating our own MIDI files and melodies to use
+    - https://www.image-line.com/fl-studio/download
+  - Keyboard: record notes for MIDI file
 
 Implementation:
   - implement Hidden Markov Model where hidden states represent chord progressions and observations are melody notes
