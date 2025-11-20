@@ -1,4 +1,4 @@
-Topic: Generating harmonies for a given melody
+Topic: Generating Harmonies for a Given Melody
 
 Training Dataset: https://huggingface.co/datasets/roszcz/lakh-lmd-full/viewer/default/train?row=16
 
@@ -12,15 +12,24 @@ Academic Resources:
   
 
 Tools & Libraries:
-  - numpy: hmm calculations
+  - numpy: HMM calculations
   - Music-specific Python Libraries:
     - MusicXML: textual data format for storing music files
     - music21: can parse MusicXML files, represents music data in a list (noted as being slow)
     - PrettyMIDI: processes MIDI files
+  - datasets: load training data
+  - tqdm
+  - pandas
+  - mnnlearn
+  - mido: for working with MIDI files
+  - note_seq
 
 Implementation:
-  - implement hmm where hidden states represent chord progressions and observations are melody notes
-  - use viterbi algorithm to find most likely chord sequence
+  - implement Hidden Markov Model where hidden states represent chord progressions and observations are melody notes
+    - transition probabilities represent how likely it is to move from one note to another
+    - emission probabilities represent how likely a (harmony) note is observed given a (melody) note
+  - use Viterbi Algorithm to find most likely note sequence
 
 Implementation Decisions:
-  - Choosing uniform format for representing musical information
+  - choose uniform format for representing musical information
+  - 
