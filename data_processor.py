@@ -168,25 +168,26 @@ class DataProcessor:
     self.__violin_sequences = violin_sequences
 
   @staticmethod
-  def prob_distribution(x: ndarray[Any, Any]) -> ndarray:
-    '''
-    Convert list of counts (i.e number of transitions from s to all s_prime) into probability distribution
-    '''
-    return np.array([n for n in x]) / np.sum(x)
-  
+  def make_prob_distribution(entry: Dict[int, int]) -> Dict[int, float]:
+    denom = np.sum([v for v in entry.values()])
+    for k in entry.keys():
+      entry[k] /= denom
+               
   @staticmethod
-  def table_to_prob_distribution(table: Dict[int, ndarray], num_threads=16) -> Dict[int, ndarray]:
-    res = {}
-    with ThreadPoolExecutor(num_threads) as exec:
-      futures = {exec.submit(DataProcessor.prob_distribution, entry): i for i, entry in table.items()}
-      for f in tqdm(as_completed(futures), total=len(futures)):
-        i = futures[f]
-        res[i] = f.result()
-    return res
-
-  def get_hmm(self) -> Tuple[set[int], ndarray, Dict[int, ndarray], Dict[int, ndarray]]:
+  def dictionary_to_prob_distribution(matrix: Dict[int, Dict[int, int]]) -> Dict[int, Dict[int, float]]:
+    '''
+    Converts dictionary (transition or observation matrix) so that entries are probability distributions
+    Input:
+    Initial transition or observation matrix where values count transitions/emissions
+    Output:
+    Dictionary where values are to probability of a transition/emission
+    '''
+    with ThreadPoolExecutor(max_workers=16) as executor:
+      executor.map(DataProcessor.get_prob_distribution, [v for v in matrix.values()])
+                  
+  def get_hmm(self) -> Tuple[Dict[int, Dict[int, float]], Dict[int, Dict[int, float]], Dict[int, float], set[int]]:
     states = set()
-    pi = np.zeros(self.__state_space)
+    pi = {}
     T = {}
     O = {}
     # loop through each piano, violin sequence pair
@@ -197,27 +198,23 @@ class DataProcessor:
       # initialize state 
       s = DataProcessor.hash_note(piano_seq[0], True) 
 
-      # add initial state to state set and initial state matrix
-      states.add(s); pi[s] += 1 
-
+      # add initial state to states set and initial probability distribution
+      states.add(s); pi[s] = pi.get(s, 0) + 1
+            
       # loop through piano notes and violin notes while neither have been exhausted
       while i < len(piano_seq) - 1 and j < len(violin_seq):
         # next state
-        s_prime = DataProcessor.hash_note(piano_seq[i + 1], True) 
+        s_prime = DataProcessor.hash_note(piano_seq[i + 1], True)
 
         # add s_prime to states set
         states.add(s_prime)
 
-        # initialize key s in transition matrix if it does not exist
-        if s not in T:
-          T[s] = np.zeros(self.__state_space)
+        # count transition from s to s_prime
+        T[s] = T.get(s, {}); T[s][s_prime] = T[s].get(s_prime, 0) + 1
 
-        # count transitions form s to s_prime
-        T[s][s_prime] += 1
-
-        # calculate start and end time of current state
+        # calculate current state start and end timestampe
         s_start = piano_seq[i][3]
-        s_end = s_start + piano_seq[i][2] 
+        s_end = s_start + piano_seq[i][2]
 
         # if current violin note proceeds the current piano chord skip
         if violin_seq[j][3] < s_start:
@@ -234,12 +231,10 @@ class DataProcessor:
           # get hashed obs
           o = DataProcessor.hash_note(violin_seq[j], False)
 
-          # initialize O[s] if s not in observation matrix
-          if s not in O:
-            O[s] = np.zeros(self.__obs_space)
-          
-          # increment emission of obs o from state s
-          O[s][o] += 1
+          # initialize key s in obs matrix if dne, increment or initialize observation o from s in obs matrix
+          O[s] = O.get(s, {}); O[s][o] = O[s].get(o, 0) + 1
+
+          # go to next violin note
           j += 1
         
         # set current state to s_prime and increment i
@@ -247,17 +242,19 @@ class DataProcessor:
 
       # process remaining states (piano notes) if all violin notes have been exhausted (first loop terminates)
       while i < len(piano_seq) - 1:
-        s = DataProcessor.hash_note(piano_seq[i], True)
-        s_prime = DataProcessor.hash_note(piano_seq[i + 1], True); states.add(s_prime)
-        if s not in T:
-          T[s] = np.zeros(self.__state_space)
-        T[s][s_prime] += 1
+        s_prime = DataProcessor.hash_note(piano_seq[i + 1], True)
+        T[s] = T.get(s, {}); T[s][s_prime] = T[s].get(s_prime, 0) + 1
         i += 1
-      
-    T = DataProcessor.table_to_prob_distribution(T) 
-    O = DataProcessor.table_to_prob_distribution(O)
-    pi = DataProcessor.prob_distribution(pi)
-    return states, pi, T, O
+        s = s_prime
 
+    DataProcessor.dictionary_to_prob_distribution(T)
+    DataProcessor.dictionary_to_prob_distribution(O)
+    DataProcessor.make_prob_distribution(pi)
+    return T, O, pi, states
+    
 if __name__ == '__main__':
-  pass
+  dp = DataProcessor(num_songs=2000)
+  dp.init_midi_objects()
+  dp.init_note_sequences()
+  T, O, pi, states = dp.get_hmm()
+  
