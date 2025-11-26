@@ -11,15 +11,24 @@ from numpy import ndarray
 import seaborn as sns
 import time
 from tqdm import tqdm
-from IPython.display import display
-import multiprocessing
+import pickle
 
 class DataProcessor:
+  '''
+  Handles complete workflow from raw midi files to constructing HMM
+  Example workflow:
+    - Initialize PrettyMIDI objects from midi_files in given path
+    - Create invidivual piano, violin note sequences for each midi object.
+    - Use piano, violin sequences to obtain all transitions, observations, initial states, states.
+    - Convert transitions, observations, initial states to probability distributions.
+  '''
   def __init__(self, midi_path='piano-violin-data', num_songs=7823):
     self.__midi_files = list(Path(midi_path).glob('*.mid'))[:num_songs]
     self.__midi_objects: List[pm.PrettyMIDI] 
-    self.__piano_sequences: List[List[int]]
-    self.__violin_sequences: List[List[int]]
+    self.__piano_sequences: List[List[List[Any]]]
+    self.__violin_sequences: List[List[List[Any]]]
+    self.__state_space: int = 0x1FFFF
+    self.__obs_space: int = 0x1FFFF
 
   @property
   def midi_files(self) -> List[Path]:
@@ -30,29 +39,28 @@ class DataProcessor:
     return self.__midi_objects
   
   @property
-  def piano_sequences(self) -> List[List[int]]:
+  def piano_sequences(self) -> List[List[List[Any]]]:
     return self.__piano_sequences
 
   @property
-  def violin_sequences(self) -> List[List[int]]:
+  def violin_sequences(self) -> List[List[List[Any]]]:
     return self.__violin_sequences
-
-  @staticmethod
-  def initial_hash(note: List[Any]) -> int:
-    '''
-    Hash note represented as a list of the form: [pitch, velocity, duration, float] into an integer
-    Pitch: integer in (0, 127) -> 7 bits (0x7F)
-    Velocity: integer in (0, 127) -> 7 bits (0x7F)
-    Duration: float in (0, 296.72) converted to int in (0, 29672) -> 15 bits (0x7FFF)
-    Start: float in (0, 2144.73) converted to int in (0, 214473) -> 18 bits (0x3FFFF)
-    '''
-    duration = min(0x7FFF, int(note[2] * 100)); start = min(0x3FFFF, int(note[3] * 100))
-    return (note[0] & 0x7F) | (note[1] & 0x7F) << 7 | (duration & 0x7FFF) << 15 | (start & 0x3FFFF) << 29
   
+  @property
+  def state_space(self) -> int:
+    return self.__state_space
+  
+  @property
+  def obs_space(self) -> int:
+    return self.__obs_space
+
   @staticmethod
   def bin_duration_piano(dur: float) -> int:
     '''
-    Bin piano note duration into category represented by integer in (0, 7)
+    Input:
+    Duration of note (seconds) as a float
+    Returns:
+    Integer in (0, 7) representing the bin that the duration falls in
     '''
     if dur <= 0.10:
       return 0
@@ -74,7 +82,10 @@ class DataProcessor:
   @staticmethod
   def bin_duration_violin(dur: float) -> int:
     '''
-    Bin violin note duration into category represented by integer in (0, 7)
+    Input:
+    Duration of note (seconds) as a float
+    Returns:
+    Integer in (0, 7) representing the bin that the duration falls in
     '''
     if dur <= 0.08:
       return 0
@@ -90,17 +101,22 @@ class DataProcessor:
       return 5
     elif dur <= 1.19:
       return 6 
-    else:
+    else: 
       return 7
-  
+ 
   @staticmethod
-  def final_hash(note: int, is_piano: bool) -> int:
-    dur = (note >> 14 & 0x7FFF) / 100
-    dur_bin = DataProcessor.bin_duration_piano(dur) if is_piano else DataProcessor.bin_duration_violin(dur)
-    return (note & 0x3FFF) | (dur_bin & 7) << 14
+  def hash_note(note: List[Any], is_piano: bool) -> int:
+    '''
+    Input:
+    Note as a list object: [pitch (int), velocity (int), duration (float), start (float)]
+    Returns:
+    Single integer (17 bit) representing pitch, velocity, and duration 
+    '''
+    duration = DataProcessor.bin_duration_piano(note[2]) if is_piano else DataProcessor.bin_duration_violin(note[2])
+    return (note[0] & 0x7F) | (note[1] & 0x7F) << 7 | (duration & 7) << 14
 
-  @staticmethod 
-  def get_notes(midi: pm.PrettyMIDI) -> Tuple[List[int], List[int]]:
+  @staticmethod
+  def get_notes(midi: pm.PrettyMIDI) -> Tuple[List[List[Any]], List[List[Any]]]:
     '''
     Input: individual midi object
     Returns: list of piano notes, list of violin notes
@@ -112,17 +128,9 @@ class DataProcessor:
     for instrument in midi.instruments:
       name = pm.program_to_instrument_name(instrument.program)
       if 'piano' in name.lower():
-        for i, n in enumerate(instrument.notes):
-          if i == 0:
-            piano_notes.append(DataProcessor.initial_hash([n.pitch, n.velocity, n.get_duration(), True, True]))
-          else:
-            piano_notes.append(DataProcessor.initial_hash([n.pitch, n.velocity, n.get_duration(), False, True]))
+        piano_notes = [[n.pitch, n.velocity, n.get_duration(), n.start] for n in instrument.notes]
       elif name.lower() == 'violin':
-        for i, n in enumerate(instrument.notes):
-          if i == 0:
-            violin_notes.append(DataProcessor.initial_hash([n.pitch, n.velocity, n.get_duration(), True, False]))
-          else:
-            violin_notes.append(DataProcessor.initial_hash([n.pitch, n.velocity, n.get_duration(), False, False]))
+        violin_notes = [[n.pitch, n.velocity, n.get_duration(), n.start] for n in instrument.notes]
     return piano_notes, violin_notes
 
   @staticmethod
@@ -152,7 +160,7 @@ class DataProcessor:
     piano_sequences, violin_sequences = [[] for _ in range(len(self.__midi_files))], [[] for _ in range(len(self.__midi_files))]
     with ThreadPoolExecutor(num_threads) as executor:
       futures_indexed = {executor.submit(DataProcessor.get_notes, midi): ix for ix, midi in enumerate(self.__midi_objects)}
-      for f in as_completed(futures_indexed):
+      for f in tqdm(as_completed(futures_indexed), total=len(futures_indexed)):
         ix = futures_indexed[f]
         piano_seq, violin_seq = f.result()
         piano_sequences[ix] = piano_seq; violin_sequences[ix] = violin_seq
@@ -160,24 +168,34 @@ class DataProcessor:
     self.__violin_sequences = violin_sequences
 
   @staticmethod
-  def prob_distribution(x: ndarray[Any, Any]) -> List[float]:
+  def prob_distribution(x: ndarray[Any, Any]) -> ndarray:
     '''
     Convert list of counts (i.e number of transitions from s to all s_prime) into probability distribution
     '''
-    return [n for n in x] / np.sum(x)
+    return np.array([n for n in x]) / np.sum(x)
   
-  def get_hmm(self):
+  @staticmethod
+  def table_to_prob_distribution(table: Dict[int, ndarray], num_threads=16) -> Dict[int, ndarray]:
+    res = {}
+    with ThreadPoolExecutor(num_threads) as exec:
+      futures = {exec.submit(DataProcessor.prob_distribution, entry): i for i, entry in table.items()}
+      for f in tqdm(as_completed(futures), total=len(futures)):
+        i = futures[f]
+        res[i] = f.result()
+    return res
+
+  def get_hmm(self) -> Tuple[set[int], ndarray, Dict[int, ndarray], Dict[int, ndarray]]:
     states = set()
+    pi = np.zeros(self.__state_space)
     T = {}
     O = {}
-    pi = [] 
     # loop through each piano, violin sequence pair
     for piano_seq, violin_seq in tqdm(zip(self.__piano_sequences, self.__violin_sequences), total=len(self.__piano_sequences)):
       # initialize piano, violin note indices
       i, j = 0, 0
 
-      # current state (piano note)
-      s = piano_seq[i] 
+      # initialize state 
+      s = DataProcessor.hash_note(piano_seq[0], True) 
 
       # add initial state to state set and initial state matrix
       states.add(s); pi[s] += 1 
@@ -185,79 +203,61 @@ class DataProcessor:
       # loop through piano notes and violin notes while neither have been exhausted
       while i < len(piano_seq) - 1 and j < len(violin_seq):
         # next state
-        s_prime = piano_seq[i + 1]
+        s_prime = DataProcessor.hash_note(piano_seq[i + 1], True) 
 
-        # count transition from s to s_prime
-        T[s][s_prime] += 1; states.add(s_prime)
+        # add s_prime to states set
+        states.add(s_prime)
+
+        # initialize key s in transition matrix if it does not exist
+        if s not in T:
+          T[s] = np.zeros(self.__state_space)
+
+        # count transitions form s to s_prime
+        T[s][s_prime] += 1
 
         # calculate start and end time of current state
-        s_start = (s >> 28) / 100
-        s_end = s_start + (s >> 14 & 0x3FFF) / 100
+        s_start = piano_seq[i][3]
+        s_end = s_start + piano_seq[i][2] 
 
-        # go to next violin note while current violin note proceeds current state
-        while (violin_seq[j] >> 28) / 100 < s_start:
-          j += 1
-        
-        # go to previous violin note while current violin note follows current state
-        while (violin_seq[j] >> 28) / 100 > s_start:
-          j -= 1
-        
-        # current observation (violin note)
-        o = violin_seq[j]
+        # if current violin note proceeds the current piano chord skip
+        if violin_seq[j][3] < s_start:
+          while j < len(violin_seq) and violin_seq[j][3] < s_start:
+            j += 1
+        # else if current violin note follows the current piano chord
+        # try to find an earlier violin note that is observed from s
+        elif violin_seq[j][3] > s_start:
+          while j > 0 and violin_seq[j - 1][3] > s_start:
+            j -= 1
 
         # while current violin note overlaps the current piano note
-        while s_start < (o >> 28) / 100 < s_end:
-          # count observation o from state s
+        while j < len(violin_seq) and s_start < violin_seq[j][3] < s_end:
+          # get hashed obs
+          o = DataProcessor.hash_note(violin_seq[j], False)
+
+          # initialize O[s] if s not in observation matrix
+          if s not in O:
+            O[s] = np.zeros(self.__obs_space)
+          
+          # increment emission of obs o from state s
           O[s][o] += 1
           j += 1
-          o = violin_seq[j]
         
         # set current state to s_prime and increment i
         s = s_prime; i += 1
 
       # process remaining states (piano notes) if all violin notes have been exhausted (first loop terminates)
       while i < len(piano_seq) - 1:
-        s = piano_seq[i]
-        s_prime = piano_seq[i]; states.add(s_prime)
+        s = DataProcessor.hash_note(piano_seq[i], True)
+        s_prime = DataProcessor.hash_note(piano_seq[i + 1], True); states.add(s_prime)
+        if s not in T:
+          T[s] = np.zeros(self.__state_space)
         T[s][s_prime] += 1
+        i += 1
       
-    # return transition matrix, observation matrix, initial state counts and set of states
-    T = [DataProcessor.prob_distribution(t) for t in T]
-    O = [DataProcessor.prob_distribution(t) for t in O]
+    T = DataProcessor.table_to_prob_distribution(T) 
+    O = DataProcessor.table_to_prob_distribution(O)
     pi = DataProcessor.prob_distribution(pi)
-    return T, O, pi, states
+    return states, pi, T, O
 
 if __name__ == '__main__':
-  dp = DataProcessor()
-  dp.init_midi_objects()
-
-  piano_starts, violin_starts = [], []
-  piano_durs, violin_durs = [], []
-  for midi in dp.midi_objects:
-    for instrument in midi.instruments:
-        name = pm.program_to_instrument_name(instrument.program)
-        if name.lower() == 'violin':
-          violin_starts.extend([n.start for n in instrument.notes])
-          violin_durs.extend([n.get_duration() for n in instrument.notes])
-        else:
-          piano_starts.extend([n.start for n in instrument.notes])
-          piano_durs.extend([n.get_duration() for n in instrument.notes])
-    
-    piano_start_stats = [np.percentile(piano_starts, i) for i in range(14, 100, 14)]
-    piano_durs_stats = [np.percentile(piano_durs, i) for i in range(14, 100, 14)]
-
-    violin_start_stats = [np.percentile(violin_starts, i) for i in range(14, 100, 14)]
-    violin_durs_stats = [np.percentile(violin_durs, i) for i in range(14, 100, 14)]
-
-    piano_starts_stats = [f'{x:.2f}' for x in piano_start_stats]
-    piano_durs_stats = [f'{x:.2f}' for x in piano_durs_stats]
-    violin_start_stats = [f'{x:.2f}' for x in violin_start_stats]
-    violin_durs_stats = [f'{x:.2f}' for x in violin_durs_stats]
-
-    pd.set_option('display.max_columns', None)
-    df = pd.DataFrame(
-      [piano_start_stats, piano_durs_stats, violin_start_stats, violin_durs_stats],
-      index=['piano start timestamps', 'piano duration timestamps', 'violin start timestamps', 'violin duration timestamps'],
-      columns=['14th pct', '28th pct', '42nd pct', '56th pct', '70th pct', '84th pct', '98th pct']
-    )
-    display(df)
+  pass
