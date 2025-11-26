@@ -61,8 +61,10 @@ class HMM:
             p_start = self.start_prob.get(s, 0.0)
 
             # how well this chord explains the first melody note
+            p_start = self.start_prob.get(s, 1e-12)
             p_emit = self.emit_prob.get(s, {}).get(first_obs, 1e-12)
-
+            p_trans = self.trans_prob.get(prev_s, {}).get(s, 1e-12)
+            
             # convert to log probabilities
             V0[s] = self._safe_log(p_start) + self._safe_log(p_emit)
 
