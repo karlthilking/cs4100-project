@@ -18,8 +18,6 @@ class DataProcessor:
     self.__midi_objects: List[pm.PrettyMIDI] 
     self.__piano_sequences: List[List[int]]
     self.__violin_sequences: List[List[int]]
-    self.__state_space: int = 0x7F | 0x7F << 7 | 0x3FFF << 14 | 0x1FFFF << 28
-    self.__obs_space: int = 0x7F | 0x7F << 7 | 0x3FFF << 14 | 0x1FFFF << 28
 
   @property
   def midi_files(self) -> List[Path]:
@@ -43,11 +41,11 @@ class DataProcessor:
     Hash note represented as a list of the form: [pitch, velocity, duration, float] into an integer
     Pitch: integer in (0, 127) -> 7 bits 
     Velocity: integer in (0, 127) -> 7 bits 
-    Duration: float in (0, 106.xx) converted to int in (0, 10600) -> 14 bits
-    Start: float in (0, 1100.xx) converted to int in (0, 110000) -> 17 bits
+    Duration: float in (0, 296.72) converted to int in (0, 29672) -> 15 bits
+    Start: float in (0, 2144.73) converted to int in (0, 214473) -> 18 bits
     '''
     duration = int(note[2] * 100); start = int(note[3] * 100)
-    return (note[0] & 0x7F) | (note[1] & 0x7F) << 7 | (duration & 0x3FFF) << 14 | (start & 0x1FFFF) << 28
+    return (note[0] & 0x7F) | (note[1] & 0x7F) << 7 | (duration & 0x7FFF) << 15 | (start & 0x3FFFF) << 29
   
   @staticmethod
   def final_hash(note: int) -> int:
@@ -187,51 +185,10 @@ if __name__ == '__main__':
   dp.init_midi_objects()
   midis = dp.midi_objects
 
-  piano_durs, violin_durs = [], []
+  starts = []
   for midi in midis:
     for instrument in midi.instruments:
       name = pm.program_to_instrument_name(instrument.program)
-      if name.lower() == 'violin':
-        violin_durs.extend([n.get_duration() for n in instrument.notes])
-      else:
-        piano_durs.extend([n.get_duration() for n in instrument.notes])
+      starts.extend([n.start for n in instrument.notes])
   
-  max_pd = np.max(piano_durs)
-  mean_pd = np.mean(piano_durs)
-  median_pd = np.median(piano_durs)
-  std_pd = np.std(piano_durs)
-  iqr_pd = np.percentile(piano_durs, 75) - np.percentile(piano_durs, 25)
-  pct90_pd = np.percentile(piano_durs, 90)
-  pct99_pd = np.percentile(piano_durs, 99)
-
-  max_vd = np.max(violin_durs)
-  mean_vd = np.mean(violin_durs)
-  median_vd = np.median(violin_durs)
-  std_vd = np.std(violin_durs)
-  iqr_vd = np.percentile(violin_durs, 75) - np.percentile(violin_durs, 25)
-  pct90_vd = np.percentile(violin_durs, 90)
-  pct99_vd = np.percentile(violin_durs, 99)
-
-  piano_stats = [max_pd, mean_pd, median_pd, std_pd, iqr_pd, pct90_pd, pct99_pd]
-  violin_stats = [max_vd, mean_vd, median_vd, std_vd, iqr_vd, pct90_vd, pct99_vd]
-
-  piano_stats = [f'{x:.2f}' for x in piano_stats]
-  violin_stats = [f'{x:.2f}' for x in violin_stats]
-
-  df = pd.DataFrame([piano_stats, violin_stats], index=['piano', 'violin'], columns=['max', 'mean', 'median', 'std', 'iqr', '90th pct', '99th pct'])
-  fig, ax = plt.subplots(figsize=(12, 12))
-  ax.axis('tight')
-  ax.axis('off')
-  table = ax.table(
-    cellText=df.values,
-    colLabels=df.columns,
-    rowLabels=df.index,
-    cellLoc='center',
-    loc='center'
-  ) 
-  table.auto_set_font_size(False)
-  table.set_fontsize(12)
-  table.scale(1, 2)
-  plt.show()
-  plt.savefig('duration_stats.png', bbox_inches='tight', dpi=150)
-
+  print(f'Max start: {np.max(starts)}')
