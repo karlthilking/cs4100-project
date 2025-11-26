@@ -1,5 +1,6 @@
 import pretty_midi as pm
 import pandas as pd
+from pandas import DataFrame
 from pathlib import Path
 from typing import List, Union, Optional, Dict, Tuple, Any, Counter
 from collections import defaultdict
@@ -11,6 +12,7 @@ import seaborn as sns
 import time
 from tqdm import tqdm
 from IPython.display import display
+import multiprocessing
 
 class DataProcessor:
   def __init__(self, midi_path='piano-violin-data', num_songs=7823):
@@ -39,17 +41,63 @@ class DataProcessor:
   def initial_hash(note: List[Any]) -> int:
     '''
     Hash note represented as a list of the form: [pitch, velocity, duration, float] into an integer
-    Pitch: integer in (0, 127) -> 7 bits 
-    Velocity: integer in (0, 127) -> 7 bits 
-    Duration: float in (0, 296.72) converted to int in (0, 29672) -> 15 bits
-    Start: float in (0, 2144.73) converted to int in (0, 214473) -> 18 bits
+    Pitch: integer in (0, 127) -> 7 bits (0x7F)
+    Velocity: integer in (0, 127) -> 7 bits (0x7F)
+    Duration: float in (0, 296.72) converted to int in (0, 29672) -> 15 bits (0x7FFF)
+    Start: float in (0, 2144.73) converted to int in (0, 214473) -> 18 bits (0x3FFFF)
     '''
-    duration = int(note[2] * 100); start = int(note[3] * 100)
+    duration = min(0x7FFF, int(note[2] * 100)); start = min(0x3FFFF, int(note[3] * 100))
     return (note[0] & 0x7F) | (note[1] & 0x7F) << 7 | (duration & 0x7FFF) << 15 | (start & 0x3FFFF) << 29
   
   @staticmethod
-  def final_hash(note: int) -> int:
-    pitch = note 
+  def bin_duration_piano(dur: float) -> int:
+    '''
+    Bin piano note duration into category represented by integer in (0, 7)
+    '''
+    if dur <= 0.10:
+      return 0
+    elif dur <= 0.15:
+      return 1
+    elif dur <= 0.21:
+      return 2
+    elif dur <= 0.29:
+      return 3
+    elif dur <= 0.42:
+      return 4
+    elif dur <= 0.62:
+      return 5
+    elif dur <= 1.82:
+      return 6
+    else:
+      return 7
+
+  @staticmethod
+  def bin_duration_violin(dur: float) -> int:
+    '''
+    Bin violin note duration into category represented by integer in (0, 7)
+    '''
+    if dur <= 0.08:
+      return 0
+    elif dur <= 0.11:
+      return 1 
+    elif dur <= 0.16:
+      return 2
+    elif dur <= 0.21:
+      return 3 
+    elif dur <= 0.26:
+      return 4 
+    elif dur <= 0.39:
+      return 5
+    elif dur <= 1.19:
+      return 6 
+    else:
+      return 7
+  
+  @staticmethod
+  def final_hash(note: int, is_piano: bool) -> int:
+    dur = (note >> 14 & 0x7FFF) / 100
+    dur_bin = DataProcessor.bin_duration_piano(dur) if is_piano else DataProcessor.bin_duration_violin(dur)
+    return (note & 0x3FFF) | (dur_bin & 7) << 14
 
   @staticmethod 
   def get_notes(midi: pm.PrettyMIDI) -> Tuple[List[int], List[int]]:
@@ -122,7 +170,7 @@ class DataProcessor:
     states = set()
     T = {}
     O = {}
-    pi = np.zeros(self.__state_space)
+    pi = [] 
     # loop through each piano, violin sequence pair
     for piano_seq, violin_seq in tqdm(zip(self.__piano_sequences, self.__violin_sequences), total=len(self.__piano_sequences)):
       # initialize piano, violin note indices
@@ -180,15 +228,36 @@ class DataProcessor:
     return T, O, pi, states
 
 if __name__ == '__main__':
-  start_time = time.time()
   dp = DataProcessor()
   dp.init_midi_objects()
-  midis = dp.midi_objects
 
-  starts = []
-  for midi in midis:
+  piano_starts, violin_starts = [], []
+  piano_durs, violin_durs = [], []
+  for midi in dp.midi_objects:
     for instrument in midi.instruments:
-      name = pm.program_to_instrument_name(instrument.program)
-      starts.extend([n.start for n in instrument.notes])
-  
-  print(f'Max start: {np.max(starts)}')
+        name = pm.program_to_instrument_name(instrument.program)
+        if name.lower() == 'violin':
+          violin_starts.extend([n.start for n in instrument.notes])
+          violin_durs.extend([n.get_duration() for n in instrument.notes])
+        else:
+          piano_starts.extend([n.start for n in instrument.notes])
+          piano_durs.extend([n.get_duration() for n in instrument.notes])
+    
+    piano_start_stats = [np.percentile(piano_starts, i) for i in range(14, 100, 14)]
+    piano_durs_stats = [np.percentile(piano_durs, i) for i in range(14, 100, 14)]
+
+    violin_start_stats = [np.percentile(violin_starts, i) for i in range(14, 100, 14)]
+    violin_durs_stats = [np.percentile(violin_durs, i) for i in range(14, 100, 14)]
+
+    piano_starts_stats = [f'{x:.2f}' for x in piano_start_stats]
+    piano_durs_stats = [f'{x:.2f}' for x in piano_durs_stats]
+    violin_start_stats = [f'{x:.2f}' for x in violin_start_stats]
+    violin_durs_stats = [f'{x:.2f}' for x in violin_durs_stats]
+
+    pd.set_option('display.max_columns', None)
+    df = pd.DataFrame(
+      [piano_start_stats, piano_durs_stats, violin_start_stats, violin_durs_stats],
+      index=['piano start timestamps', 'piano duration timestamps', 'violin start timestamps', 'violin duration timestamps'],
+      columns=['14th pct', '28th pct', '42nd pct', '56th pct', '70th pct', '84th pct', '98th pct']
+    )
+    display(df)
