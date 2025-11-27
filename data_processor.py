@@ -23,12 +23,17 @@ class DataProcessor:
     - Convert transitions, observations, initial states to probability distributions.
   '''
   def __init__(self, midi_path='piano-violin-data', num_songs=7823):
+    self.__num_songs = num_songs
     self.__midi_files = list(Path(midi_path).glob('*.mid'))[:num_songs]
     self.__midi_objects: List[pm.PrettyMIDI] 
     self.__piano_sequences: List[List[List[Any]]]
     self.__violin_sequences: List[List[List[Any]]]
     self.__state_space: int = 0x1FFFF
-    self.__obs_space: int = 0x1FFFF
+    self.__obs_space: int = 0x1FFFFa
+    self.__T: Dict[int, Dict[int, float]]
+    self.__O: Dict[int, Dict[int, float]]
+    self.__pi: Dict[int, float]
+    self.__states: set[int]
 
   @property
   def midi_files(self) -> List[Path]:
@@ -168,13 +173,13 @@ class DataProcessor:
     self.__violin_sequences = violin_sequences
 
   @staticmethod
-  def make_prob_distribution(entry: Dict[int, int]) -> Dict[int, float]:
+  def make_prob_distribution(entry: Dict[int, int]):
     denom = np.sum([v for v in entry.values()])
     for k in entry.keys():
-      entry[k] /= denom
+      entry[k] = max(0.0, entry[k] / denom)
                
   @staticmethod
-  def dictionary_to_prob_distribution(matrix: Dict[int, Dict[int, int]]) -> Dict[int, Dict[int, float]]:
+  def dictionary_to_prob_distribution(matrix: Dict[int, Dict[int, int]]):
     '''
     Converts dictionary (transition or observation matrix) so that entries are probability distributions
     Input:
@@ -183,9 +188,9 @@ class DataProcessor:
     Dictionary where values are to probability of a transition/emission
     '''
     with ThreadPoolExecutor(max_workers=16) as executor:
-      executor.map(DataProcessor.get_prob_distribution, [v for v in matrix.values()])
+      executor.map(DataProcessor.make_prob_distribution, [v for v in matrix.values()])
                   
-  def get_hmm(self) -> Tuple[Dict[int, Dict[int, float]], Dict[int, Dict[int, float]], Dict[int, float], set[int]]:
+  def init_hmm(self):
     states = set()
     pi = {}
     T = {}
@@ -242,7 +247,7 @@ class DataProcessor:
 
       # process remaining states (piano notes) if all violin notes have been exhausted (first loop terminates)
       while i < len(piano_seq) - 1:
-        s_prime = DataProcessor.hash_note(piano_seq[i + 1], True)
+        s_prime = DataProcessor.hash_note(piano_seq[i + 1], True); states.add(s_prime)
         T[s] = T.get(s, {}); T[s][s_prime] = T[s].get(s_prime, 0) + 1
         i += 1
         s = s_prime
@@ -250,11 +255,24 @@ class DataProcessor:
     DataProcessor.dictionary_to_prob_distribution(T)
     DataProcessor.dictionary_to_prob_distribution(O)
     DataProcessor.make_prob_distribution(pi)
-    return T, O, pi, states
-    
+    self.__T = T; self.__O = O; self.__pi = pi; self.__states = states 
+  
+  def get_hmm_params(self) -> Tuple[Dict[int, Dict[int, float]], Dict[int, Dict[int, float]], Dict[int, float], set[int]]:
+    return self.__T, self.__O, self.__pi, self.__states
+  
+  def save_hmm_params(self):
+    with open(f'T_{self.__num_songs}.pickle', 'wb') as handle:
+      pickle.dump(self.__T, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    with open(f'O_{self.__num_songs}.pickle', 'wb') as handle:
+      pickle.dump(self.__O, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    with open(f'pi_{self.__num_songs}.pickle', 'wb') as handle:
+      pickle.dump(self.__pi, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    with open(f'states_{self.__num_songs}.pickle', 'wb') as handle:
+      pickle.dump(self.__states, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
 if __name__ == '__main__':
-  dp = DataProcessor(num_songs=2000)
+  dp = DataProcessor()
   dp.init_midi_objects()
   dp.init_note_sequences()
-  T, O, pi, states = dp.get_hmm()
-  
+  dp.init_hmm()
+  dp.save_hmm_params()
