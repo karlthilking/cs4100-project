@@ -4,6 +4,7 @@ from data_processor import DataProcessor
 from hmm_v2 import HMM
 from music21 import stream, note, instrument, tempo
 
+# decode from hash to MIDI information
 def decode_note(note_hash: int) -> Tuple[int, int, float, float]:
     pitch = note_hash & 0x7F
     velocity = (note_hash >> 7) & 0x7F
@@ -11,8 +12,10 @@ def decode_note(note_hash: int) -> Tuple[int, int, float, float]:
     start = ((note_hash >> 29) & 0x3FFFF) / 100.0
     return pitch, velocity, duration, start
 
+# take in a sequence and turn it into a midi file
 def sequence_to_midi(state_sequence: List[int], out_path: str):
     midi = pm.PrettyMIDI()
+    # set instrument to piano
     inst = pm.Instrument(program=0)
 
     for note_hash in state_sequence:
@@ -22,10 +25,11 @@ def sequence_to_midi(state_sequence: List[int], out_path: str):
     midi.instruments.append(inst)
     midi.write(out_path)
 
-
+# create sheet music from sequence
 def sequence_to_sheet(state_sequence: List[int], out_path: str):
     s = stream.Stream()
     s.append(instrument.Piano())
+    # take into account tempo
 
     for note_hash in state_sequence:
         pitch, vel, dur, start = decode_note(note_hash)
@@ -36,6 +40,7 @@ def sequence_to_sheet(state_sequence: List[int], out_path: str):
 
     s.write("musicxml", fp=out_path)
 
+# generate the harmony part with our HMM
 def generate_harmony(
     states,
     start_prob,
@@ -59,14 +64,18 @@ def main():
     dp.init_midi_objects()
     dp.init_note_sequences()
 
+    # initially set observations to none
     observations = None
+    # for every sequence in the violin/melody
     for seq in dp.violin_sequences:
+        # if there is a sequence
         if seq:
+            # set our observation to this sequence
             observations = seq
             break
 
     # HMM
-    T_prob, O_prob, pi_prob, states = dp.get_hmm()
+    T_prob, O_prob, pi_prob, states, interval_count = dp.get_hmm()
 
     # Generate harmony and music sheet
     midi_path = "harmony_final.mid"

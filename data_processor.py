@@ -166,11 +166,24 @@ class DataProcessor:
     '''
     return [n for n in x] / np.sum(x)
   
+  @staticmethod
+  def get_pitch(note_hash: int) -> int:
+    '''
+    Given the note hash, return the midi note number (0-127)
+    '''
+    return note_hash & 0x7F
+  
   def get_hmm(self):
     states = set()
     T = {}
     O = {}
     pi = [] 
+    # dictionary for counting intervals between notes (compare with actual music theory later)
+    interval_count = {}
+    # initially set the count of seeing all intervals to 0
+    for i in range(12):
+      interval_count[i] = 0
+
     # loop through each piano, violin sequence pair
     for piano_seq, violin_seq in tqdm(zip(self.__piano_sequences, self.__violin_sequences), total=len(self.__piano_sequences)):
       # initialize piano, violin note indices
@@ -211,6 +224,12 @@ class DataProcessor:
           O[s][o] += 1
           j += 1
           o = violin_seq[j]
+          melody_pitch = DataProcessor.get_pitch(s)
+          harmony_pitch = DataProcessor.get_pitch(o)
+          # get the interval (ignoring octaves) between the violin aka melody note and piano aka harmony note
+          interval = abs(melody_pitch - harmony_pitch) % 12
+          # add the interval to the dictionary
+          interval_count[interval] += 1
         
         # set current state to s_prime and increment i
         s = s_prime; i += 1
@@ -225,7 +244,7 @@ class DataProcessor:
     T = [DataProcessor.prob_distribution(t) for t in T]
     O = [DataProcessor.prob_distribution(t) for t in O]
     pi = DataProcessor.prob_distribution(pi)
-    return T, O, pi, states
+    return T, O, pi, states, interval_count
 
 if __name__ == '__main__':
   dp = DataProcessor()
