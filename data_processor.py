@@ -1,7 +1,7 @@
 import pretty_midi as pm
 from pathlib import Path
 from typing import List, Dict, Tuple, Any
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 import numpy as np
 from tqdm import tqdm
 import pickle
@@ -181,7 +181,7 @@ class DataProcessor:
     Output:
     Dictionary where values are to probability of a transition/emission
     '''
-    with ThreadPoolExecutor(max_workers=16) as executor:
+    with ProcessPoolExecutor() as executor:
       executor.map(DataProcessor.make_prob_distribution, [v for v in matrix.values()])
 
   def init_hmm(self):
