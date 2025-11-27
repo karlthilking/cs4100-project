@@ -1,17 +1,11 @@
 import pretty_midi as pm
-import pandas as pd
-from pandas import DataFrame
 from pathlib import Path
-from typing import List, Union, Optional, Dict, Tuple, Any, Counter
-from collections import defaultdict
+from typing import List, Dict, Tuple, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import matplotlib.pyplot as plt
 import numpy as np
-from numpy import ndarray
-import seaborn as sns
-import time
 from tqdm import tqdm
 import pickle
+import os
 
 class DataProcessor:
   '''
@@ -29,7 +23,7 @@ class DataProcessor:
     self.__piano_sequences: List[List[List[Any]]]
     self.__violin_sequences: List[List[List[Any]]]
     self.__state_space: int = 0x1FFFF
-    self.__obs_space: int = 0x1FFFFa
+    self.__obs_space: int = 0x1FFFF
     self.__T: Dict[int, Dict[int, float]]
     self.__O: Dict[int, Dict[int, float]]
     self.__pi: Dict[int, float]
@@ -189,7 +183,7 @@ class DataProcessor:
     '''
     with ThreadPoolExecutor(max_workers=16) as executor:
       executor.map(DataProcessor.make_prob_distribution, [v for v in matrix.values()])
-                  
+
   def init_hmm(self):
     states = set()
     pi = {}
@@ -261,13 +255,15 @@ class DataProcessor:
     return self.__T, self.__O, self.__pi, self.__states
   
   def save_hmm_params(self):
-    with open(f'T_{self.__num_songs}.pickle', 'wb') as handle:
+    path = f'config_{self.__num_songs}'
+    os.mkdir(path)
+    with open(f'{path}/T_{self.__num_songs}.pickle', 'wb') as handle:
       pickle.dump(self.__T, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(f'O_{self.__num_songs}.pickle', 'wb') as handle:
+    with open(f'{path}/O_{self.__num_songs}.pickle', 'wb') as handle:
       pickle.dump(self.__O, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(f'pi_{self.__num_songs}.pickle', 'wb') as handle:
+    with open(f'{path}/pi_{self.__num_songs}.pickle', 'wb') as handle:
       pickle.dump(self.__pi, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(f'states_{self.__num_songs}.pickle', 'wb') as handle:
+    with open(f'{path}/states_{self.__num_songs}.pickle', 'wb') as handle:
       pickle.dump(self.__states, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 if __name__ == '__main__':
