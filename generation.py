@@ -3,6 +3,7 @@ import pretty_midi as pm
 from data_processor import DataProcessor
 from hmm_v2 import HMM
 from music21 import stream, note, instrument, tempo
+import random
 
 # decode from hash to MIDI information
 def decode_note(note_hash: int) -> Tuple[int, int, float, float]:
@@ -64,23 +65,24 @@ def main():
     dp.init_midi_objects()
     dp.init_note_sequences()
 
-    # initially set observations to none
-    observations = None
-    # for every sequence in the violin/melody
-    for seq in dp.violin_sequences:
-        # if there is a sequence
-        if seq:
-            # set our observation to this sequence
-            observations = seq
-            break
+    # pick a random violin melody as a test
+    non_empty_indices = [i for i, seq in enumerate(dp.violin_sequences) if seq]
+    test_idx = random.choice(non_empty_indices)
 
-    # HMM
+    observations = dp.violin_sequences[test_idx]
+
+    # build training sets on all melodies, except the testing one
+    train_piano = [seq for i, seq in enumerate(dp.piano_sequences) if i != test_idx]
+    train_violin = [seq for i, seq in enumerate(dp.violin_sequences) if i != test_idx]
+
+    # HMM trained on N-1 songs
+    dp._DataProcessor__piano_sequences = train_piano
+    dp._DataProcessor__violin_sequences = train_violin
     T_prob, O_prob, pi_prob, states, interval_count = dp.get_hmm()
 
-    # Generate harmony and music sheet
     midi_path = "harmony_final.mid"
     sheet_path = "harmony_final.musicxml"
-
+    
     best_path, best_log_prob = generate_harmony(
         states=list(states),
         start_prob=pi_prob,
