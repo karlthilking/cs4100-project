@@ -36,18 +36,20 @@ class HMM:
         return math.log(p)
 
     def interval_consonance_reward(self, melody_note, harmony_note):
-      melody_pitch = melody_note & 0x7F 
-      harmony_pitch = harmony_note & 0x7F
-      interval = abs(melody_pitch - harmony_note) % 12
-      perfect_intervals = {0, 5, 7, 12}
-      imperfect_intervals = {3, 4, 8, 9}
-      dissonant_intervals = {1, 2, 6, 10, 11}
-      if interval in perfect_intervals:
-        return 0.7
-      elif interval in imperfect_intervals:
-        return 0.5
-      else:
-        return 0.3
+        melody_pitch = (melody_note  >> 7) & 0xF
+        harmony_pitch = (harmony_note >> 7) & 0xF
+        interval = abs(melody_pitch - harmony_pitch) % 12
+
+        perfect_intervals = {0, 5, 7, 12}
+        imperfect_intervals = {3, 4, 8, 9}
+        dissonant_intervals = {1, 2, 6, 10, 11}
+        
+        if interval in perfect_intervals:
+            return 0.7
+        elif interval in imperfect_intervals:
+            return 0.5
+        else:
+            return 0.3
 
     def viterbi(self, observations):
         """
