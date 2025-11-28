@@ -6,38 +6,67 @@ from music21 import stream, note, instrument, tempo
 import random
 import pickle
 import os
+import numpy as np
 
-def load_hmm_params(path="HMM_params"):
-    with open(os.path.join(path, "T.pickle"), "rb") as f:
-        T = pickle.load(f)
-    with open(os.path.join(path, "O.pickle"), "rb") as f:
-        O = pickle.load(f)
-    with open(os.path.join(path, "pi.pickle"), "rb") as f:
-        pi = pickle.load(f)
-    with open(os.path.join(path, "states.pickle"), "rb") as f:
-        states = pickle.load(f)
-    return T, O, pi, states
+
+def load_hmm_params(path: str = "HMM_params"):
+    # load arrays saved by DataProcessor.save_hmm_params
+    T_arr = np.load(os.path.join(path, "T.npy"))
+    O_arr = np.load(os.path.join(path, "O.npy"))
+    pi_arr = np.load(os.path.join(path, "pi.npy"))
+    states = np.load(os.path.join(path, "states.npy")).tolist()
+    obs = np.load(os.path.join(path, "obs.npy")).tolist()
+
+    state_list = list(states)
+    obs_list = list(obs)
+
+    # convert arrays back to dict-of-dicts for HMM
+    T_dict: Dict[int, Dict[int, float]] = {}
+    O_dict: Dict[int, Dict[int, float]] = {}
+    pi_dict: Dict[int, float] = {}
+
+    # transitions: T[s][s'] = prob
+    for i, s in enumerate(state_list):
+        row = T_arr[i]
+        T_dict[s] = {}
+        for j, s2 in enumerate(state_list):
+            val = float(row[j])
+            if val > 0.0:
+                T_dict[s][s2] = val
+
+    # emissions: O[s][o] = prob
+    for i, s in enumerate(state_list):
+        row = O_arr[i]
+        O_dict[s] = {}
+        for k, o in enumerate(obs_list):
+            val = float(row[k])
+            if val > 0.0:
+                O_dict[s][o] = val
+
+    # start probs: pi[s] = prob
+    for i, s in enumerate(state_list):
+        val = float(pi_arr[i])
+        if val > 0.0:
+            pi_dict[s] = val
+
+    return T_dict, O_dict, pi_dict, state_list, obs_list
+
 
 # decode from hash to MIDI information
 def decode_note(note_hash: int) -> Tuple[int, int, float]:
     dur_bin      =  note_hash        & 0x3          
-    octave_bin   = (note_hash >> 2)  & 0x3        
-    velo_bin     = (note_hash >> 4)  & 0x7        
-    pitch_class  = (note_hash >> 7)  & 0xF 
-
+    octave_bin   = (note_hash >> 2)  & 0x3
+    velo_bin     = (note_hash >> 4)  & 0x3        
+    pitch_class  = (note_hash >> 6)  & 0xF
+    
     # TODO: could be tweaked
-    OCTAVE_BIN_TO_OCT = [2, 3, 4, 5]  # you can tweak these if needed
+    OCTAVE_BIN_TO_OCT = [2, 3, 4, 5]
 
-    # use midpoints as representative values
     VEL_BIN_TO_VEL = [
-        8,  
-        24, 
-        40,  
-        56,  
-        72,  
-        88,
-        104,
-        120,
+        24,   
+        64,   
+        96,  
+        112, 
     ]
     
     DUR_BIN_TO_SEC_PIANO = [
@@ -110,7 +139,7 @@ def generate_harmony(
 
 def main():
     # Load trained HMM 
-    T_prob, O_prob, pi_prob, states = load_hmm_params()
+    T_prob, O_prob, pi_prob, states, obs = load_hmm_params()
 
     # Load testing melodies
     dp_test = DataProcessor(train=False)
