@@ -1,35 +1,36 @@
 import matplotlib.pyplot as plt
 from data_processor import DataProcessor
-from hmm_v2 import HMM
+from hmm import HMM
 import seaborn as sns
 import numpy as np
+from generation import load_hmm_params, decode_note
 
 
 def get_pitch_from_hash(h: int) -> int:
-    return h & 0x7F
-
+    pitch, _, _ = decode_note(h)
+    return pitch
 
 def main():
+    # Load trained HMM params
+    T_prob, O_prob, pi_prob, states, obs = load_hmm_params()
+    states = list(states)
 
-    # Load dataset
-    dp = DataProcessor()
-    dp.init_midi_objects()
-    dp.init_note_sequences()
+    # Load testing melodies from test-data
+    dp_test = DataProcessor(train=False)
+    dp_test.init_note_sequences()
 
-    # pick one violin melody
-    non_empty_indices = [i for i, seq in enumerate(dp.violin_sequences) if seq]
-    test_idx = non_empty_indices[0]
+    violin_seqs = dp_test.violin_sequences
 
-    raw_melody = dp.violin_sequences[test_idx]
+    with open("selected_test_idx.txt", "r") as f:
+        test_idx = int(f.read().strip())
+
+    print("Loaded selected test melody idx:", test_idx)
+    raw_melody = violin_seqs[test_idx]
+
     observations = [DataProcessor.hash_note(n, is_piano=False) for n in raw_melody]
     print("Melody length:", len(observations))
 
     # Build HMM from data
-    dp.init_hmm()
-    T_prob, O_prob, pi_prob, states = dp.get_hmm_params()
-
-    states = list(states)
-
     hmm = HMM(
         states=states,
         start_prob=pi_prob,
