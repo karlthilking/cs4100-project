@@ -177,7 +177,7 @@ class DataProcessor:
     states = set()
     T = {}
     O = {}
-    pi = [] 
+    pi = {}
     # dictionary for counting intervals between notes (compare with actual music theory later)
     interval_count = {}
     # initially set the count of seeing all intervals to 0
@@ -193,7 +193,8 @@ class DataProcessor:
       s = piano_seq[i] 
 
       # add initial state to state set and initial state matrix
-      states.add(s); pi[s] += 1 
+      states.add(s)
+      pi[s] = pi.get(s, 0) + 1 
 
       # loop through piano notes and violin notes while neither have been exhausted
       while i < len(piano_seq) - 1 and j < len(violin_seq):
@@ -201,7 +202,10 @@ class DataProcessor:
         s_prime = piano_seq[i + 1]
 
         # count transition from s to s_prime
-        T[s][s_prime] += 1; states.add(s_prime)
+        if s not in T:
+          T[s] = {}
+        T[s][s_prime] = T[s].get(s_prime, 0) + 1
+        states.add(s_prime)
 
         # calculate start and end time of current state
         s_start = (s >> 28) / 100
@@ -221,7 +225,9 @@ class DataProcessor:
         # while current violin note overlaps the current piano note
         while s_start < (o >> 28) / 100 < s_end:
           # count observation o from state s
-          O[s][o] += 1
+          if s not in O:
+            O[s] = {}
+          O[s][o] = O[s].get(o, 0) + 1
           j += 1
           o = violin_seq[j]
           melody_pitch = DataProcessor.get_pitch(s)
@@ -238,12 +244,33 @@ class DataProcessor:
       while i < len(piano_seq) - 1:
         s = piano_seq[i]
         s_prime = piano_seq[i]; states.add(s_prime)
-        T[s][s_prime] += 1
-      
+        if s not in T:
+          T[s] = {}
+        T[s][s_prime] = T[s].get(s_prime, 0) + 1
+        i += 1
+
+
     # return transition matrix, observation matrix, initial state counts and set of states
-    T = [DataProcessor.prob_distribution(t) for t in T]
-    O = [DataProcessor.prob_distribution(t) for t in O]
-    pi = DataProcessor.prob_distribution(pi)
+    # normalize pi
+    total_pi = sum(pi.values())
+    if total_pi > 0:
+        for s in pi:
+            pi[s] = pi[s] / total_pi
+
+    # normalize T rows
+    for s in T:
+        row_sum = sum(T[s].values())
+        if row_sum > 0:
+            for s_prime in T[s]:
+                T[s][s_prime] = T[s][s_prime] / row_sum
+
+    # normalize O rows
+    for s in O:
+        row_sum = sum(O[s].values())
+        if row_sum > 0:
+            for o in O[s]:
+                O[s][o] = O[s][o] / row_sum
+
     return T, O, pi, states, interval_count
 
 if __name__ == '__main__':
