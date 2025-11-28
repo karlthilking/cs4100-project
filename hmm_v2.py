@@ -146,17 +146,16 @@ class HMM:
                     p_emit = self.emit_prob.get(s, {}).get(obs, 1e-12)
 
                     # calculates reward multiplier based on interval between melody and harmony
-                    interval_reward = self.interval_consonance_reward(self, obs, s)
+                    interval_reward = self.interval_consonance_reward(obs, s)
                     # total score for ending in state s via prev_s
                     score = (
                             V[t - 1][prev_s]
                             + self._safe_log(p_trans)
                             + self._safe_log(p_emit)
+                            + self._safe_log(interval_reward)
+
                     )
-
-                    # multiply the score by the interval reward multiplier
-                    score = score * interval_reward
-
+                    
                     # keep the best-scoring previous state
                     if score > best_score:
                         best_score = score
