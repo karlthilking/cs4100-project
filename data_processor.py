@@ -17,9 +17,11 @@ class DataProcessor:
     - Use piano, violin sequences to obtain all transitions, observations, initial states, states.
     - Convert transitions, observations, initial states to probability distributions.
   '''
-  def __init__(self, midi_path='train-data', num_songs=6650):
-    self.__num_songs = num_songs
-    self.__midi_files = list(Path(midi_path).glob('*.mid'))[:num_songs]
+  def __init__(self, train: bool = True):
+    self.__train = train
+    self.__num_songs = 6650 if self.__train else 1137 
+    self.__midi_path = 'train-data' if self.__train else 'test-data'
+    self.__midi_files = list(Path(self.__midi_path).glob('*.mid'))[:self.__num_songs]
     self.__midi_objects: List[pm.PrettyMIDI] 
     self.__piano_sequences: List[ndarray] = []
     self.__violin_sequences: List[ndarray] = [] 
