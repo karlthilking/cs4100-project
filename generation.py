@@ -6,12 +6,24 @@ from music21 import stream, note, instrument, tempo
 import random
 
 # decode from hash to MIDI information
-def decode_note(note_hash: int) -> Tuple[int, int, float, float]:
+def decode_note(note_hash: int) -> Tuple[int, int, float]:
     pitch = note_hash & 0x7F
     velocity = (note_hash >> 7) & 0x7F
-    duration = ((note_hash >> 15) & 0x7FFF) / 100.0
-    start = ((note_hash >> 29) & 0x3FFFF) / 100.0
-    return pitch, velocity, duration, start
+    dur_bin = (note_hash >> 14) & 0x7 
+
+    piano_bin_durations = [
+        0.08,   
+        0.125,  
+        0.18,   
+        0.25,  
+        0.35,   
+        0.5,    
+        1.2,    
+        2.0,    
+    ]
+
+    duration = piano_bin_durations[dur_bin]
+    return pitch, velocity, duration
 
 # take in a sequence and turn it into a midi file
 def sequence_to_midi(state_sequence: List[int], out_path: str):
@@ -19,10 +31,14 @@ def sequence_to_midi(state_sequence: List[int], out_path: str):
     # set instrument to piano
     inst = pm.Instrument(program=0)
 
+    current_time = 0.0
     for note_hash in state_sequence:
-        pitch, vel, dur, start = decode_note(note_hash)
-        inst.notes.append(pm.Note(vel, pitch, start, start + dur))
-
+        pitch, vel, dur = decode_note(note_hash)
+        start = current_time
+        end = start + dur
+        inst.notes.append(pm.Note(vel, pitch, start, end))
+        current_time = end
+        
     midi.instruments.append(inst)
     midi.write(out_path)
 
@@ -30,10 +46,9 @@ def sequence_to_midi(state_sequence: List[int], out_path: str):
 def sequence_to_sheet(state_sequence: List[int], out_path: str):
     s = stream.Stream()
     s.append(instrument.Piano())
-    # take into account tempo
-
+    
     for note_hash in state_sequence:
-        pitch, vel, dur, start = decode_note(note_hash)
+        pitch, vel, dur = decode_note(note_hash)
 
         n = note.Note(pitch)
         n.duration.seconds = dur
@@ -69,7 +84,8 @@ def main():
     non_empty_indices = [i for i, seq in enumerate(dp.violin_sequences) if seq]
     test_idx = random.choice(non_empty_indices)
 
-    observations = dp.violin_sequences[test_idx]
+    raw_melody = dp.violin_sequences[test_idx]
+    observations = [DataProcessor.hash_note(n, is_piano=False) for n in raw_melody]
 
     # build training sets on all melodies, except the testing one
     train_piano = [seq for i, seq in enumerate(dp.piano_sequences) if i != test_idx]
@@ -78,7 +94,8 @@ def main():
     # HMM trained on N-1 songs
     dp._DataProcessor__piano_sequences = train_piano
     dp._DataProcessor__violin_sequences = train_violin
-    T_prob, O_prob, pi_prob, states, interval_count = dp.get_hmm()
+    dp.init_hmm()
+    T_prob, O_prob, pi_prob, states = dp.get_hmm_params()
 
     midi_path = "harmony_final.mid"
     sheet_path = "harmony_final.musicxml"
