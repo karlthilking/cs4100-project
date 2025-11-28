@@ -59,8 +59,8 @@ class HMM:
 
          '''
         # get the interval (ignoring octaves) between the given melody note and the harmony note we attempt to play
-        melody_pitch = melody_note & 0x7F  
-        harmony_pitch = harmony_note & 0x7F
+        melody_pitch = (melody_note  >> 6) & 0xF  
+        harmony_pitch = (harmony_note >> 6) & 0xF
         interval = abs(melody_pitch - harmony_pitch) % 12
 
         
@@ -114,10 +114,16 @@ class HMM:
             p_emit = self.emit_prob.get(s, {}).get(first_obs, 1e-12)
             # NOTE: prev_s is undefined also the starting state doesn't have a previous state?
             #p_trans = self.trans_prob.get(prev_s, {}).get(s, 1e-12)
+            interval_reward = self.interval_consonance_reward(first_obs, s)
+
             
             # convert to log probabilities of starting in s and seeing the first observation
-            V0[s] = self._safe_log(p_start) + self._safe_log(p_emit)
-
+            V0[s] = (
+                self._safe_log(p_start)
+                + self._safe_log(p_emit)
+                + self._safe_log(interval_reward)
+            )
+            
             # no previous state at the first time step
             back0[s] = None
 
