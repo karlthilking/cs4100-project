@@ -1,8 +1,9 @@
 import pretty_midi as pm
 from pathlib import Path
 from typing import List, Dict, Tuple, Any
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
+from numpy import ndarray
 from tqdm import tqdm
 import pickle
 import os
@@ -20,8 +21,8 @@ class DataProcessor:
     self.__num_songs = num_songs
     self.__midi_files = list(Path(midi_path).glob('*.mid'))[:num_songs]
     self.__midi_objects: List[pm.PrettyMIDI] 
-    self.__piano_sequences: List[List[List[Any]]]
-    self.__violin_sequences: List[List[List[Any]]]
+    self.__piano_sequences: List[ndarray] = []
+    self.__violin_sequences: List[ndarray] = [] 
     self.__state_space: int = 0x1FFFF
     self.__obs_space: int = 0x1FFFF
     self.__T: Dict[int, Dict[int, float]]
@@ -38,11 +39,11 @@ class DataProcessor:
     return self.__midi_objects
   
   @property
-  def piano_sequences(self) -> List[List[List[Any]]]:
+  def piano_sequences(self) -> List[ndarray]:
     return self.__piano_sequences
 
   @property
-  def violin_sequences(self) -> List[List[List[Any]]]:
+  def violin_sequences(self) -> List[ndarray]:
     return self.__violin_sequences
   
   @property
@@ -111,79 +112,30 @@ class DataProcessor:
     Returns:
     Single integer (17 bit) representing pitch, velocity, and duration 
     '''
+    pitch = int(note[0]) & 0x7F; velocity = int(note[1]) & 0x7F
     duration = DataProcessor.bin_duration_piano(note[2]) if is_piano else DataProcessor.bin_duration_violin(note[2])
-    return (note[0] & 0x7F) | (note[1] & 0x7F) << 7 | (duration & 7) << 14
+    return pitch | velocity << 7 | (duration & 7) << 14
 
-  @staticmethod
-  def get_notes(midi: pm.PrettyMIDI) -> Tuple[List[List[Any]], List[List[Any]]]:
-    '''
-    Input: individual midi object
-    Returns: list of piano notes, list of violin notes
-
-    For each note in the midi object, notes of the form [pitch, velocity, duration, is start note, is piano]
-    are hashed into a single integer and added to the respective sequence (piano notes or violin notes).
-    '''
-    piano_notes, violin_notes = [], []
-    for instrument in midi.instruments:
-      name = pm.program_to_instrument_name(instrument.program)
-      if 'piano' in name.lower():
-        piano_notes = [[n.pitch, n.velocity, n.get_duration(), n.start] for n in instrument.notes]
-      elif name.lower() == 'violin':
-        violin_notes = [[n.pitch, n.velocity, n.get_duration(), n.start] for n in instrument.notes]
-    return piano_notes, violin_notes
-
-  @staticmethod
-  def process_midi_file(midi_file: Path) -> pm.PrettyMIDI:
-    # convert midi_file to pretty_midi midi object
-    try:
-      midi = pm.PrettyMIDI(str(midi_file))
-      return midi
-    except:
-      return pm.PrettyMIDI(None)
-  
-  # intialize the class member self.midi_objects by processing all midi files into pretty_midi midi objects
-  def init_midi_objects(self, num_threads=16):
-    midi_objects: List[pm.PrettyMIDI] = [pm.PrettyMIDI(None)] * len(self.__midi_files)
-    with ThreadPoolExecutor(num_threads) as executor:
-      futures_indexed = {executor.submit(self.process_midi_file, midi_file): ix for ix, midi_file in enumerate(self.__midi_files)}
-      for f in tqdm(as_completed(futures_indexed), total=len(futures_indexed)):
-        ix = futures_indexed[f]
-        midi_objects[ix] = f.result()
-    self.__midi_objects = midi_objects
-
-  def init_note_sequences(self, num_threads=16):
+  def init_note_sequences(self):
     '''
     Initialize the class members self.piano_sequences and self.violin_sequences.
     Process midi objects (songs) asynchronously and to obtain each individual piano, violin sequence pair.
     '''
-    piano_sequences, violin_sequences = [[] for _ in range(len(self.__midi_files))], [[] for _ in range(len(self.__midi_files))]
-    with ThreadPoolExecutor(num_threads) as executor:
-      futures_indexed = {executor.submit(DataProcessor.get_notes, midi): ix for ix, midi in enumerate(self.__midi_objects)}
-      for f in tqdm(as_completed(futures_indexed), total=len(futures_indexed)):
-        ix = futures_indexed[f]
-        piano_seq, violin_seq = f.result()
-        piano_sequences[ix] = piano_seq; violin_sequences[ix] = violin_seq
-    self.__piano_sequences = piano_sequences
-    self.__violin_sequences = violin_sequences
-
-  @staticmethod
-  def make_prob_distribution(entry: Dict[int, int]):
-    denom = np.sum([v for v in entry.values()])
-    for k in entry.keys():
-      entry[k] = max(0.0, entry[k] / denom)
-               
-  @staticmethod
-  def dictionary_to_prob_distribution(matrix: Dict[int, Dict[int, int]]):
-    '''
-    Converts dictionary (transition or observation matrix) so that entries are probability distributions
-    Input:
-    Initial transition or observation matrix where values count transitions/emissions
-    Output:
-    Dictionary where values are to probability of a transition/emission
-    '''
     with ProcessPoolExecutor() as executor:
-      executor.map(DataProcessor.make_prob_distribution, [v for v in matrix.values()])
+      futures = [executor.submit(pm.PrettyMIDI, midi) for midi in self.__midi_files]
+      for f in tqdm(as_completed(futures), total=len(futures)):
+        for instrument in f.result().instruments:
+          if instrument.program == 0:
+            self.__piano_sequences.append(np.array([[n.pitch, n.velocity, n.get_duration(), n.start] for n in instrument.notes]))
+          elif instrument.program == 40:
+            self.__violin_sequences.append(np.array([[n.pitch, n.velocity, n.get_duration(), n.start] for n in instrument.notes]))
 
+  @staticmethod
+  def convert_prob_distribution(entry: Dict[int, int]):
+    denom = np.sum([c for c in entry.values()])
+    for k in entry.keys():
+      entry[k] /= denom 
+    
   def init_hmm(self):
     states = set()
     pi = {}
@@ -246,9 +198,12 @@ class DataProcessor:
         i += 1
         s = s_prime
 
-    DataProcessor.dictionary_to_prob_distribution(T)
-    DataProcessor.dictionary_to_prob_distribution(O)
-    DataProcessor.make_prob_distribution(pi)
+    # convert occurences to probability distributions
+    for k in T.keys():
+      DataProcessor.convert_prob_distribution(T[k])
+    for k in O.keys():
+      DataProcessor.convert_prob_distribution(O[k])
+    DataProcessor.convert_prob_distribution(pi)
     self.__T = T; self.__O = O; self.__pi = pi; self.__states = states 
   
   def get_hmm_params(self) -> Tuple[Dict[int, Dict[int, float]], Dict[int, Dict[int, float]], Dict[int, float], set[int]]:
@@ -268,7 +223,6 @@ class DataProcessor:
 
 if __name__ == '__main__':
   dp = DataProcessor()
-  dp.init_midi_objects()
   dp.init_note_sequences()
   dp.init_hmm()
   dp.save_hmm_params()
