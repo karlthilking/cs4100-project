@@ -59,8 +59,11 @@ class HMM:
 
          '''
         # get the interval (ignoring octaves) between the given melody note and the harmony note we attempt to play
-        interval = abs(melody_note - harmony_note) % 12
+        melody_pitch = melody_note & 0x7F  
+        harmony_pitch = harmony_note & 0x7F
+        interval = abs(melody_pitch - harmony_pitch) % 12
 
+        
         perfect_intervals = {0, 5, 7, 12}
         imperfect_intervals = {3, 4, 8, 9}
         dissonant_intervals = {1, 2, 6, 10, 11} # not used cuz else statement but figured I'd add it anyways
