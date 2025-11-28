@@ -22,21 +22,21 @@ class DataProcessor:
     self.__num_songs = 6650 if self.__train else 1137 
     self.__midi_path = 'train-data' if self.__train else 'test-data'
     self.__midi_files = list(Path(self.__midi_path).glob('*.mid'))[:self.__num_songs]
-    self.__midi_objects: List[pm.PrettyMIDI] 
     self.__piano_sequences: List[ndarray] = []
     self.__violin_sequences: List[ndarray] = [] 
-    self.__T: Dict[int, Dict[int, float]]
-    self.__O: Dict[int, Dict[int, float]]
-    self.__pi: Dict[int, float]
-    self.__states: set[int]
+    self.__T: ndarray 
+    self.__O: ndarray 
+    self.__pi: ndarray 
+    self.__states: List[int] 
+    self.__obs: List[int]
+
+  @property
+  def num_songs(self) -> int:
+    return self.__num_songs
 
   @property
   def midi_files(self) -> List[Path]:
     return self.__midi_files
-  
-  @property
-  def midi_objects(self) -> List[pm.PrettyMIDI]:
-    return self.__midi_objects
   
   @property
   def piano_sequences(self) -> List[ndarray]:
@@ -70,22 +70,14 @@ class DataProcessor:
 
   @staticmethod
   def bin_velocity(velo: int) -> int:
-    if velo <= 16: # ppp
+    if velo <= 33:
       return 0
-    elif velo <= 33: # pp
+    elif velo <= 64:
       return 1
-    elif velo <= 49: # p
+    elif velo <= 96:
       return 2
-    elif velo <= 64: # mp
+    else:
       return 3
-    elif velo <= 80: # mf
-      return 4
-    elif velo <= 96: # f
-      return 5
-    elif velo <= 112: #ff
-      return 6
-    else: # fff
-      return 7
 
   @staticmethod
   def bin_octave_piano(octave: int) -> int:
@@ -111,25 +103,32 @@ class DataProcessor:
 
   @staticmethod
   def hash_note(note: List[Any], is_piano: bool) -> int:
-    '''
+    """
     Encode note as a tuple of pitch, velocity, duration, start
-    into an integer storing pitch class, octave, velocity, and duration
-    Pitch class: 0 to 11
-    Octave bin: 0 to 3 
-    Velocity: 0 to 7
-    Duration: 0 to 3
-    '''
+    into an integer storing pitch class, octave, velocity, and duration.
+
+    Features:
+    Pitch class: integer between 0 and 11
+    Octave bin: integer between 0 and 3 
+    Velocity: integer between 0 and 7
+    Duration: integer between 0 and 3
+    """
     pitch_class = int(note[0]) % 12 
     octave = int(note[0]) // 12 - 1
     octave_bin = DataProcessor.bin_octave_piano(octave) if is_piano else DataProcessor.bin_octave_violin(octave)
     velo_bin = DataProcessor.bin_velocity(int(note[1]))
     dur_bin = DataProcessor.bin_duration_piano(note[2]) if is_piano else DataProcessor.bin_duration_violin(note[2])
-    return (dur_bin & 0x3) | (octave_bin & 0x3) << 2 | (velo_bin & 0x7) << 4 | (pitch_class & 0xF) << 7
+    return (dur_bin & 0x3) | (octave_bin & 0x3) << 2 | (velo_bin & 0x3) << 4 | (pitch_class & 0xF) << 6 
 
   def init_note_sequences(self):
     '''
-    Initialize the class members self.piano_sequences and self.violin_sequences.
-    Process midi objects (songs) asynchronously and to obtain each individual piano, violin sequence pair.
+    Initializes the piano sequences and violin sequences member variables as lists of lists containing the individual piano
+    and violin notes from each midi file. 
+
+    Converts midi files into pm.PrettyMIDI objects in order to extract information about the instrument and instrument notes 
+    (pitch, velocity, duration, start timestamp). 
+    
+    Processes midi files in parallel to speed up the process of obtaining note sequences for each midi file.
     '''
     with ProcessPoolExecutor() as executor:
       futures = [executor.submit(pm.PrettyMIDI, midi) for midi in self.__midi_files]
@@ -142,11 +141,19 @@ class DataProcessor:
 
   @staticmethod
   def convert_prob_distribution(entry: Dict[int, int]):
+    '''
+    Converts a dictionary entry where each value counts the occurence of either a transition or an observation
+    to a valid probability distribution.
+    '''
     denom = np.sum([c for c in entry.values()])
     for k in entry.keys():
       entry[k] /= denom 
     
   def init_hmm(self):
+    '''
+    Initializes the hidden markov model parameters of transition probabilities, emission probabilites, and initial state
+    probabilities as well lists containing all individual, unique states and observations.
+    '''
     states = set()
     pi = {}
     T = {}
@@ -192,7 +199,7 @@ class DataProcessor:
           # get hashed obs
           o = DataProcessor.hash_note(violin_seq[j], False)
 
-          # initialize key s in obs matrix if dne, increment or initialize observation o from s in obs matrix
+          # initialize key s in obs matrix if it does not exist, then increment or initialize observation o from s in obs matrix
           O[s] = O.get(s, {}); O[s][o] = O[s].get(o, 0) + 1
 
           # go to next violin note
@@ -201,7 +208,7 @@ class DataProcessor:
         # set current state to s_prime and increment i
         s = s_prime; i += 1
 
-      # process remaining states (piano notes) if all violin notes have been exhausted (first loop terminates)
+      # process remaining states after observations have been exhausted to account for all transitions 
       while i < len(piano_seq) - 1:
         s_prime = DataProcessor.hash_note(piano_seq[i + 1], True); states.add(s_prime)
         T[s] = T.get(s, {}); T[s][s_prime] = T[s].get(s_prime, 0) + 1
@@ -214,22 +221,48 @@ class DataProcessor:
     for k in O.keys():
       DataProcessor.convert_prob_distribution(O[k])
     DataProcessor.convert_prob_distribution(pi)
-    self.__T = T; self.__O = O; self.__pi = pi; self.__states = states 
-  
-  def get_hmm_params(self) -> Tuple[Dict[int, Dict[int, float]], Dict[int, Dict[int, float]], Dict[int, float], set[int]]:
-    return self.__T, self.__O, self.__pi, self.__states
+    
+    # converting all dictionaries to numpy arrays
+    states = sorted(states)
+    states_map = {s: i for i, s in enumerate(states)}
+
+    num_states = len(states)
+    T_arr = np.full((num_states, num_states), 1e-12)
+    for s in T.keys():
+      i = states_map[s]
+      for s_prime, prob in T[s].items():
+        j = states_map[s_prime]
+        T_arr[i, j] = prob
+    
+    all_obs = set()
+    for s in O.keys():
+      for o in O[s].keys():
+        all_obs.add(o)
+
+    obs = sorted(all_obs)
+    obs_map = {o: i for i, o in enumerate(obs)}
+
+    num_obs = len(obs)
+    O_arr = np.full((num_states, num_obs), 1e-12)
+    for s in O.keys():
+      i = states_map[s]
+      for o, prob in O[s].items():
+        j = obs_map[o]
+        O_arr[i, j] = prob
+    
+    pi_arr = np.full(num_states, 1e-12)
+    for s, prob in pi.items():
+      i = states_map[s]
+      pi_arr[i] = prob
+
+    self.__T = T_arr; self.__O = O_arr; self.__pi = pi_arr; self.__states = states; self.__obs = obs 
   
   def save_hmm_params(self):
-    path = f'HMM_params'
-    os.mkdir(path)
-    with open(f'{path}/T.pickle', 'wb') as handle:
-      pickle.dump(self.__T, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(f'{path}/O.pickle', 'wb') as handle:
-      pickle.dump(self.__O, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(f'{path}/pi.pickle', 'wb') as handle:
-      pickle.dump(self.__pi, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(f'{path}/states.pickle', 'wb') as handle:
-      pickle.dump(self.__states, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    np.save('HMM_params/T.npy', self.__T)
+    np.save('HMM_params/O.npy', self.__O)
+    np.save('HMM_params/pi.npy', self.__pi)
+    np.save('HMM_params/states.npy', self.__states)
+    np.save('HMM_params/obs.npy', self.__obs)
 
 if __name__ == '__main__':
   dp = DataProcessor()
