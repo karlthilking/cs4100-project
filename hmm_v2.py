@@ -1,5 +1,9 @@
 import math
+import numpy as np
 from typing import List, Dict, Tuple, Any
+import pickle
+import os
+from data_processor import *
 
 LOG_ZERO = float("-inf")
 
@@ -31,18 +35,32 @@ class HMM:
             return LOG_ZERO
         return math.log(p)
 
+    def interval_consonance_reward(self, melody_note, harmony_note):
+      melody_pitch = melody_note & 0x7F 
+      harmony_pitch = harmony_note & 0x7F
+      interval = abs(melody_pitch - harmony_note) % 12
+      perfect_intervals = {0, 5, 7, 12}
+      imperfect_intervals = {3, 4, 8, 9}
+      dissonant_intervals = {1, 2, 6, 10, 11}
+      if interval in perfect_intervals:
+        return 0.7
+      elif interval in imperfect_intervals:
+        return 0.5
+      else:
+        return 0.3
+
     def viterbi(self, observations):
         """
         observations = the melody notes
         states = the harmony/chords we want to guess
 
         Returns:
-            best_path -> most likely chord sequence
+            best_path -> most likely note sequence
             best_log_prob -> log-probability of that sequence
         """
 
         T = len(observations)  # number of time steps (melody notes)
-        states = self.states  # all possible hidden states (chords)
+        states = self.states  # all possible hidden states (notes)
 
         # V[t][state] = best log-probability of any path that ends in state at time t
         V = []
@@ -57,13 +75,9 @@ class HMM:
         back0 = {}
 
         for s in states:
-            # how likely we start on this chord
-            p_start = self.start_prob.get(s, 0.0)
-
             # how well this chord explains the first melody note
             p_start = self.start_prob.get(s, 1e-12)
             p_emit = self.emit_prob.get(s, {}).get(first_obs, 1e-12)
-            p_trans = self.trans_prob.get(prev_s, {}).get(s, 1e-12)
             
             # convert to log probabilities
             V0[s] = self._safe_log(p_start) + self._safe_log(p_emit)
@@ -78,7 +92,7 @@ class HMM:
         # For every future note, we try all possible previous chords and pick the best-scoring path.
         # best_score = previous best score + log P(transition prev_s -> s) + log P(emission of current note | s)
         # Get the best score and which prev state gave that score
-        for t in range(1, T):
+        for t in tqdm(range(1, T)):
             obs = observations[t]  # current melody note
             V_t = {}
             back_t = {}
@@ -107,14 +121,14 @@ class HMM:
                         best_score = score
                         best_prev_state = prev_s
 
-                # store best score and best previous chord
+                # store best score and best previous note 
                 V_t[s] = best_score
                 back_t[s] = best_prev_state
 
             V.append(V_t)
             back.append(back_t)
 
-        # 3. Termination: Pick the best-scoring final chord at time T-1.
+        # 3. Termination: Pick the best-scoring final note at time T-1.
         last_time = T - 1
         best_last_state = None
         best_log_prob = LOG_ZERO
@@ -127,7 +141,7 @@ class HMM:
 
         # 4. Backtracking to get full best path
         # Starting from the best final chord, walk backwards using the stored backpointers to recover
-        # the entire chord sequence.
+        # the entire musical sequence.
         best_path = [None] * T
         best_path[last_time] = best_last_state
 
@@ -136,3 +150,6 @@ class HMM:
             best_path[t - 1] = back[t][best_path[t]]
 
         return best_path, best_log_prob
+
+if __name__ == '__main__':
+    pass
