@@ -152,6 +152,12 @@ def main():
     non_empty_indices = [i for i, seq in enumerate(violin_seqs) if len(seq) > 0]
     test_idx = random.choice(non_empty_indices)
 
+    # save for analysis
+    with open("selected_test_idx.txt", "w") as f:
+        f.write(str(test_idx))
+
+    print("Generation using test melody idx:", test_idx)
+
     raw_melody = violin_seqs[test_idx]
     observations = [DataProcessor.hash_note(n, is_piano=False) for n in raw_melody]
 
