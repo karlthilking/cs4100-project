@@ -17,14 +17,12 @@ class DataProcessor:
     - Use piano, violin sequences to obtain all transitions, observations, initial states, states.
     - Convert transitions, observations, initial states to probability distributions.
   '''
-  def __init__(self, midi_path='piano-violin-data', num_songs=7823):
+  def __init__(self, midi_path='train-data', num_songs=6650):
     self.__num_songs = num_songs
     self.__midi_files = list(Path(midi_path).glob('*.mid'))[:num_songs]
     self.__midi_objects: List[pm.PrettyMIDI] 
     self.__piano_sequences: List[ndarray] = []
     self.__violin_sequences: List[ndarray] = [] 
-    self.__state_space: int = 0x1FFFF
-    self.__obs_space: int = 0x1FFFF
     self.__T: Dict[int, Dict[int, float]]
     self.__O: Dict[int, Dict[int, float]]
     self.__pi: Dict[int, float]
@@ -46,75 +44,85 @@ class DataProcessor:
   def violin_sequences(self) -> List[ndarray]:
     return self.__violin_sequences
   
-  @property
-  def state_space(self) -> int:
-    return self.__state_space
-  
-  @property
-  def obs_space(self) -> int:
-    return self.__obs_space
-
-  @staticmethod
+  @staticmethod 
   def bin_duration_piano(dur: float) -> int:
-    '''
-    Input:
-    Duration of note (seconds) as a float
-    Returns:
-    Integer in (0, 7) representing the bin that the duration falls in
-    '''
-    if dur <= 0.10:
+    if dur < 0.15:
       return 0
-    elif dur <= 0.15:
+    elif dur < 0.29:
       return 1
-    elif dur <= 0.21:
+    elif dur < 0.62:
       return 2
-    elif dur <= 0.29:
-      return 3
-    elif dur <= 0.42:
-      return 4
-    elif dur <= 0.62:
-      return 5
-    elif dur <= 1.82:
-      return 6
     else:
-      return 7
+      return 3
 
   @staticmethod
   def bin_duration_violin(dur: float) -> int:
-    '''
-    Input:
-    Duration of note (seconds) as a float
-    Returns:
-    Integer in (0, 7) representing the bin that the duration falls in
-    '''
-    if dur <= 0.08:
+    if dur < 0.11:
       return 0
-    elif dur <= 0.11:
-      return 1 
-    elif dur <= 0.16:
+    elif dur < 0.21:
+      return 1
+    elif dur < 0.39:
       return 2
-    elif dur <= 0.21:
-      return 3 
-    elif dur <= 0.26:
-      return 4 
-    elif dur <= 0.39:
+    else:
+      return 3
+
+  @staticmethod
+  def bin_velocity(velo: int) -> int:
+    if velo <= 16: # ppp
+      return 0
+    elif velo <= 33: # pp
+      return 1
+    elif velo <= 49: # p
+      return 2
+    elif velo <= 64: # mp
+      return 3
+    elif velo <= 80: # mf
+      return 4
+    elif velo <= 96: # f
       return 5
-    elif dur <= 1.19:
-      return 6 
-    else: 
+    elif velo <= 112: #ff
+      return 6
+    else: # fff
       return 7
- 
+
+  @staticmethod
+  def bin_octave_piano(octave: int) -> int:
+    if octave <= 2:
+      return 0
+    elif octave <= 3:
+      return 1
+    elif octave <= 4:
+      return 2
+    else:
+      return 3
+  
+  @staticmethod
+  def bin_octave_violin(octave: int) -> int:
+    if octave <= 3:
+      return 0
+    elif octave <= 4:
+      return 1
+    elif octave <= 5:
+      return 2
+    else:
+      return 3
+
   @staticmethod
   def hash_note(note: List[Any], is_piano: bool) -> int:
     '''
-    Input:
-    Note as a list object: [pitch (int), velocity (int), duration (float), start (float)]
-    Returns:
-    Single integer (17 bit) representing pitch, velocity, and duration 
+    Encode note as a tuple of pitch, velocity, duration, start
+    into an integer storing pitch class, octave, velocity, and duration
+    Pitch class: 0 to 11
+    Octave bin: 0 to 3 
+    Velocity: 0 to 7
+    Duration: 0 to 3
     '''
-    pitch = int(note[0]) & 0x7F; velocity = int(note[1]) & 0x7F
-    duration = DataProcessor.bin_duration_piano(note[2]) if is_piano else DataProcessor.bin_duration_violin(note[2])
-    return pitch | velocity << 7 | (duration & 7) << 14
+    pitch_class = int(note[0]) % 12 
+    octave = int(note[0]) // 12 - 1
+    octave_bin = DataProcessor.bin_octave_piano(octave) if is_piano else DataProcessor.bin_octave_violin(octave)
+    velo_bin = DataProcessor.bin_velocity(int(note[1]))
+    dur_bin = DataProcessor.bin_duration_piano(note[2]) if is_piano else DataProcessor.bin_duration_violin(note[2])
+    return (dur_bin & 0x3) | (octave_bin & 0x3) << 2 | (velo_bin & 0x7) << 4 | (pitch_class & 0xF) << 7
 
   def init_note_sequences(self):
     '''
@@ -210,15 +218,15 @@ class DataProcessor:
     return self.__T, self.__O, self.__pi, self.__states
   
   def save_hmm_params(self):
-    path = f'config_{self.__num_songs}'
+    path = f'HMM_params'
     os.mkdir(path)
-    with open(f'{path}/T_{self.__num_songs}.pickle', 'wb') as handle:
+    with open(f'{path}/T.pickle', 'wb') as handle:
       pickle.dump(self.__T, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(f'{path}/O_{self.__num_songs}.pickle', 'wb') as handle:
+    with open(f'{path}/O.pickle', 'wb') as handle:
       pickle.dump(self.__O, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(f'{path}/pi_{self.__num_songs}.pickle', 'wb') as handle:
+    with open(f'{path}/pi.pickle', 'wb') as handle:
       pickle.dump(self.__pi, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(f'{path}/states_{self.__num_songs}.pickle', 'wb') as handle:
+    with open(f'{path}/states.pickle', 'wb') as handle:
       pickle.dump(self.__states, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 if __name__ == '__main__':
