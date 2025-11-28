@@ -4,6 +4,19 @@ from data_processor import DataProcessor
 from hmm_v2 import HMM
 from music21 import stream, note, instrument, tempo
 import random
+import pickle
+import os
+
+def load_hmm_params(path="HMM_params"):
+    with open(os.path.join(path, "T.pickle"), "rb") as f:
+        T = pickle.load(f)
+    with open(os.path.join(path, "O.pickle"), "rb") as f:
+        O = pickle.load(f)
+    with open(os.path.join(path, "pi.pickle"), "rb") as f:
+        pi = pickle.load(f)
+    with open(os.path.join(path, "states.pickle"), "rb") as f:
+        states = pickle.load(f)
+    return T, O, pi, states
 
 # decode from hash to MIDI information
 def decode_note(note_hash: int) -> Tuple[int, int, float]:
@@ -62,12 +75,17 @@ def sequence_to_midi(state_sequence: List[int], out_path: str):
 def sequence_to_sheet(state_sequence: List[int], out_path: str):
     s = stream.Stream()
     s.append(instrument.Piano())
-    
+
+    s.append(tempo.MetronomeMark(number=120))
+    DUR_BIN_TO_QL = [0.25, 0.5, 1.0, 2.0]
+
     for note_hash in state_sequence:
         pitch, vel, dur = decode_note(note_hash)
 
         n = note.Note(pitch)
-        n.duration.seconds = dur
+        dur_bin = note_hash & 0x3  
+        n.quarterLength = DUR_BIN_TO_QL[dur_bin]
+        
         s.append(n)
 
     s.write("musicxml", fp=out_path)
@@ -91,11 +109,8 @@ def generate_harmony(
     return best_path, best_log_prob
 
 def main():
-    # Train HMM on train set
-    dp_train = DataProcessor(train=True)
-    dp_train.init_note_sequences()
-    dp_train.init_hmm()
-    T_prob, O_prob, pi_prob, states = dp_train.get_hmm_params()
+    # Load trained HMM 
+    T_prob, O_prob, pi_prob, states = load_hmm_params()
 
     # Load testing melodies
     dp_test = DataProcessor(train=False)
