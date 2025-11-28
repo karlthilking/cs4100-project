@@ -1,7 +1,7 @@
 from typing import List, Dict, Tuple
 import pretty_midi as pm
 from data_processor import DataProcessor
-from hmm_v2 import HMM
+from hmm import HMM
 from music21 import stream, note, instrument, tempo
 import random
 import pickle
