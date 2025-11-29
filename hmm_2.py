@@ -33,12 +33,14 @@ class HMM:
       back[t, :] = np.argmax(temp, axis=0)
       V[t, :] = temp[back[t, :], np.arange(N)] + self.__log_O[:, obs_ix[t]]
     
+    # termination
     last_ix = np.argmax(V[-1, :])
     best_log_prob = V[-1, last_ix]
 
     path = np.zeros(T, dtype=np.int32)
     path[T - 1] = last_ix
 
+    # backtracking to find best path
     for t in range(T - 2, -1, -1):
       path[t] = back[t + 1, path[t + 1]]
     
@@ -50,6 +52,10 @@ if __name__ == '__main__':
   hmm = HMM()
   dp = DP(train=False)
   dp.init_note_sequences()
+
+  song_ix = np.random.randint(dp.num_songs)
+  print(f'Song {song_ix} being used')
+
   violin_sequence = dp.violin_sequences[np.random.randint(dp.num_songs)]
   obs = [DP.hash_note(n, False) for n in violin_sequence]
 
