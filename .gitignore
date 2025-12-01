@@ -1,0 +1,12 @@
+/HMM-Params
+/stats
+/Tegridy-MIDI-Dataset
+/test-data 
+/train-data 
+
+.DS_Store
+
+analysis.py 
+generation_analysis.py
+work_with_midi.py
+outline.md 
