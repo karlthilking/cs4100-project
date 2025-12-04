@@ -1,6 +1,6 @@
 Topic: Generating Harmonies for a Given Melody
 
-Training Dataset: https://huggingface.co/datasets/roszcz/lakh-lmd-full/viewer/default/train?row=16
+Training Dataset: https://github.com/asigalov61/Tegridy-MIDI-Dataset/tree/master/Mono-Melodies/Piano-Violin
 
 Academic Resources:
   - https://www.cis.upenn.edu/~cis2620/notes/Example-Viterbi-DNA.pdf
@@ -40,4 +40,13 @@ Implementation:
 
 Implementation Decisions:
   - choose uniform format for representing musical information
-  - 
+  - rewards for consonant vs disonant intervals
+  - matching melody and harmony note duration
+  - rewarding smoother harmonies with less jumping between octaves
+
+Limitations:
+
+Future Considerations:
+  - adjusting bins so they match between melody and harmony
+  - using intervals created by the test data rather than hardcoding certain intervals and rewards
+

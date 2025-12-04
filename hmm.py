@@ -51,6 +51,43 @@ class HMM:
         else:
             return 0.3
 
+    def harmony_octave_penalty(self, prev_s, s):
+        '''
+        Implements small/medium punishment for the harmony jumping between octaves 
+        ie. encouraging the harmony to be much smoother
+        '''
+        # get the pitches including the octave
+        prev_pitch = (prev_s >> 7) & 0xF
+        curr_pitch = (s       >> 7) & 0xF
+
+        # get absolute value of how far away the previous and current pitches are (in semitones)
+        diff = abs(prev_pitch - curr_pitch)
+
+        # no penalty for within an octave
+        if diff <= 12:
+            return 0.0
+        # small penalty if within 2 octaves
+        elif diff <= 24:
+            return -0.5
+        # larger penalty greater than 2 octave differences
+        else:
+            return -1.0
+        
+
+    def duration_reward(self, melody_note, harmony_note):
+        '''
+        Rewards the harmony for matching the melody duration according to their bins
+        NOTE: the binned durations for melodies and harmonies differ
+        '''
+        melody_duration = (melody_note  >> 7) & 0x3
+        harmony_duration = (harmony_note >> 7) & 0x3
+        
+        # rewards for harmony note matching the duration of the melody (in bin)
+        if melody_duration == harmony_duration:
+            return 1
+        else: 
+            return 0
+
     def viterbi(self, observations):
         """
         observations = the melody notes
@@ -111,12 +148,27 @@ class HMM:
                     # emission probability: how well current chord explains current note
                     p_emit = self.emit_prob.get(s, {}).get(obs, 1e-12)
 
+                    # calculates reward multiplier based on interval between melody and harmony
+                    interval_reward_multiplier = self.interval_consonance_reward(obs, s)   
+                    duration_reward = self.duration_reward(obs, s) 
+                    jump_penalty = self.harmony_octave_penalty(prev_s, s)
+
                     # total score for ending in state s via prev_s
                     score = (
                             V[t - 1][prev_s]
                             + self._safe_log(p_trans)
                             + self._safe_log(p_emit)
+                            + self._safe_log(duration_reward)
                     )
+                    score = (
+                        V[t-1][prev_s]
+                        + self._safe_log(p_trans)
+                        + self._safe_log(p_emit)
+                        + duration_reward
+                        + jump_penalty
+                    )
+
+                    score *= interval_reward_multiplier
 
                     # keep the best-scoring previous state
                     if score > best_score:
