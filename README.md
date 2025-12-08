@@ -7,7 +7,9 @@ Our project's purpose was to develop an AI System capable of generating harmonie
 **data_processor.py**:
   - Responsible for converting original midi files obtained from the Tegridy-MIDI-Dataset to note sequence lists with a tuple containing each note's information.
   - Produced the parameters of our Hidden Markov Model (transition probabilities, emission probabilities, initial state probabilities, etc.) by iterating through piano and violin sequences corresponding to each individual song contained in our training data (5650 songs).
+
 **hmm.py**
   - Implements the Viterbi algortihm that takes a violin melody as input and identifies the most likely accompanying piano sequence according to the parameters of our Hidden Markov Model.
+
 **generation.py**
   - Decrypts the path of piano notes provided by Viterbi decoding and produces the resulting song (as a midi file) and complementary music sheet.
