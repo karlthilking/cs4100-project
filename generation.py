@@ -40,7 +40,7 @@ def decode_note(note_hash: int) -> Tuple[int, int, float]:
     return pitch, velocity, duration
 
 # take in a sequence and turn it into a midi file
-def sequence_to_midi(state_sequence: List[int], out_path: str):
+def sequence_to_midi(state_sequence: List[int], filename: str, dir: str):
     midi = pm.PrettyMIDI()
     # set instrument to piano
     inst = pm.Instrument(program=0)
@@ -52,12 +52,13 @@ def sequence_to_midi(state_sequence: List[int], out_path: str):
         end = start + dur
         inst.notes.append(pm.Note(vel, pitch, start, end))
         current_time = end
-        
+
     midi.instruments.append(inst)
-    midi.write(out_path)
+    midi_path = os.path.join(dir, f"{filename}.mid")
+    midi.write(midi_path)
 
 # create sheet music from sequence
-def sequence_to_sheet(state_sequence: List[int], out_path: str):
+def sequence_to_sheet(state_sequence: List[int], filename: str, dir: str):
     s = stream.Stream()
     s.append(instrument.Piano())
 
@@ -68,24 +69,26 @@ def sequence_to_sheet(state_sequence: List[int], out_path: str):
         pitch, vel, dur = decode_note(note_hash)
 
         n = note.Note(pitch)
-        dur_bin = note_hash & 0x3  
+        dur_bin = note_hash & 0x3
         n.quarterLength = DUR_BIN_TO_QL[dur_bin]
-        
+
         s.append(n)
 
-    s.write("musicxml", fp=out_path)
+    xml_path = os.path.join(dir, f"{filename}.musicxml")
+    s.write("musicxml", fp=xml_path)
+
 
 # generate the harmony part with our HMM
 def generate_harmony(
     observations,
-    midi_out: str,
-    sheet_out: str,
+    dir: str,
+    filename: str
 ):
     hmm = HMM()
     best_path, best_log_prob = hmm.viterbi(observations)
 
-    sequence_to_midi(best_path, midi_out)
-    sequence_to_sheet(best_path, sheet_out)
+    sequence_to_midi(best_path, filename, dir)
+    sequence_to_sheet(best_path, filename, dir)
 
     return best_path, best_log_prob
 
@@ -107,13 +110,11 @@ def main(num_songs=1):
         song_dir = os.path.join(samples_dir, f"song_{song_ix}")
         os.makedirs(song_dir, exist_ok=True)
         filename = f"harmony_{song_ix}"
-        midi_path = os.path.join(song_dir, f"{filename}.mid")
-        sheet_path = os.path.join(song_dir, f"{filename}.musicxml")
 
         best_path, best_log_prob = generate_harmony(
             observations=observations,
-            midi_out=midi_path,
-            sheet_out=sheet_path,
+            dir=f"samples/song_{song_ix}",
+            filename=f"harmony_{song_ix}"
         )
         print("Best log-prob:", best_log_prob)
 
