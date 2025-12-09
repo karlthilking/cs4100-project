@@ -1,10 +1,11 @@
 from typing import List, Tuple
 import pretty_midi as pm
+from tqdm import tqdm
 from data_processor import DataProcessor
 from hmm import HMM
 from music21 import stream, note, instrument, tempo
-import random
 import os
+from pathlib import Path
 import numpy as np
 
 # decode from hash to MIDI information
@@ -88,34 +89,33 @@ def generate_harmony(
 
     return best_path, best_log_prob
 
-def main():
+def main(num_songs=1):
     # Load testing melodies
     dp_test = DataProcessor(train=False)
     dp_test.init_note_sequences()
+    samples_dir = "samples"
+    os.makedirs(samples_dir, exist_ok=True)
 
-    song_ix = np.random.randint(dp_test.num_songs)
-    violin_seq = dp_test.violin_sequences[song_ix]
+    for i in tqdm(range(num_songs), total=num_songs):
+        song_ix = np.random.randint(dp_test.num_songs)
+        violin_seq = dp_test.violin_sequences[song_ix]
 
-    # save for analysis
-    fp = f"samples/song_{song_ix}/{song_ix}.txt"
-    os.mkdir(f"samples/song_{song_ix}")
-    with open(fp, "w") as f:
-        f.write(fp)
+        print("Generating harmony with melody #: ", song_ix)
 
-    print("Generating harmony with melody #: ", song_ix)
+        observations = [DataProcessor.hash_note(n, is_piano=False) for n in violin_seq]
 
-    observations = [DataProcessor.hash_note(n, is_piano=False) for n in violin_seq]
+        song_dir = os.path.join(samples_dir, f"song_{song_ix}")
+        os.makedirs(song_dir, exist_ok=True)
+        filename = f"harmony_{song_ix}"
+        midi_path = os.path.join(song_dir, f"{filename}.mid")
+        sheet_path = os.path.join(song_dir, f"{filename}.musicxml")
 
-    midi_path = f"samples/song_{song_ix}/harmony_{song_ix}.mid"
-    sheet_path = f"samples/song_{song_ix}/harmony_{song_ix}.musicxml"
-    
-    best_path, best_log_prob = generate_harmony(
-        observations=observations,
-        midi_out=midi_path,
-        sheet_out=sheet_path,
-    )
-    
-    print("Best log-prob:", best_log_prob)
-    
+        best_path, best_log_prob = generate_harmony(
+            observations=observations,
+            midi_out=midi_path,
+            sheet_out=sheet_path,
+        )
+        print("Best log-prob:", best_log_prob)
+
 if __name__ == "__main__":
-    main()
+    main(num_songs=5)
