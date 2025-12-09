@@ -1,209 +1,166 @@
-import math
+from threading import Thread
 import numpy as np
-from typing import List, Dict, Tuple, Any
-import pickle
-import os
-from data_processor import *
-
-LOG_ZERO = float("-inf")
-
+from numpy import ndarray
+from concurrent.futures import as_completed, ProcessPoolExecutor, ThreadPoolExecutor
+from typing import List, Dict, Any 
+from data_processor import DataProcessor as DP
+from tqdm import tqdm
+import time
 
 class HMM:
-    """
-    HMM:
-    - states: list of state labels (chords)
-    - start_prob: P(state at t=0)
-    - trans_prob: P(next_state | current_state)
-    - emit_prob: P(observation | state)
-    """
+  def __init__(self, path='HMM_params'):
+    self.__T = np.load(f'{path}/T.npy')
+    self.__O = np.load(f'{path}/O.npy')
+    self.__pi = np.load(f'{path}/pi.npy')
+    self.__states = np.load(f'{path}/states.npy')
+    self.__obs = np.load(f'{path}/obs.npy')
+    self.__states_map = {s: i for i, s in enumerate(self.__states)} # maps state id to index in T, O, pi
+    self.__obs_map = {o: i for i, o in enumerate(self.__obs)} # maps obs id to index in entry of O
+    self.__log_T = np.log(self.__T)
+    self.__log_O = np.log(self.__O)
+    self.__log_pi = np.log(self.__pi)
+    self.intervals = {
+      "perfect_intervals": [0, 5, 7, 12],
+      "imperfect_intervals": [3, 4, 8, 9],
+      "dissonant_intervals": [1, 2, 6, 10, 11]
+    }
 
-    def __init__(
-            self,
-            states: List[Any],
-            start_prob: Dict[Any, float],
-            trans_prob: Dict[Any, Dict[Any, float]],
-            emit_prob: Dict[Any, Dict[Any, float]],
-    ):
-        self.states = states
-        self.start_prob = start_prob
-        self.trans_prob = trans_prob
-        self.emit_prob = emit_prob
+  @property
+  def states(self): return self.__states
+  @property
+  def states_map(self): return self.__states_map
 
-    def _safe_log(self, p: float) -> float:
-        """Return log(p)"""
-        if p <= 0.0:
-            return LOG_ZERO
-        return math.log(p)
+  def interval_consonance_reward(self, melody_note, harmony_note):
+    melody_pitch = (melody_note  >> 6) & 0xF
+    harmony_pitch = (harmony_note >> 6) & 0xF
+    interval = abs(melody_pitch - harmony_pitch) % 12
 
-    def interval_consonance_reward(self, melody_note, harmony_note):
-        melody_pitch = (melody_note  >> 7) & 0xF
-        harmony_pitch = (harmony_note >> 7) & 0xF
-        interval = abs(melody_pitch - harmony_pitch) % 12
+    if interval in self.intervals["perfect_intervals"]:
+      return 0.7
+    elif interval in self.intervals["imperfect_intervals"]:
+      return 0.5
+    else:
+      return 0.3
 
-        perfect_intervals = {0, 5, 7, 12}
-        imperfect_intervals = {3, 4, 8, 9}
-        dissonant_intervals = {1, 2, 6, 10, 11}
-        
-        if interval in perfect_intervals:
-            return 0.7
-        elif interval in imperfect_intervals:
-            return 0.5
-        else:
-            return 0.3
+  def harmony_octave_penalty(self, prev_s, s):
+    '''
+    Implements small/medium punishment for the harmony jumping between octaves
+    ie. encouraging the harmony to be much smoother
+    '''
+    # get the pitches including the octave
+    prev_pitch = ((prev_s >> 6) & 0xF) + 12 * ((prev_s >> 2) & 0x3)
+    curr_pitch = ((s      >> 6) & 0xF) + 12 * ((s      >> 2) & 0x3)
+    diff = abs(prev_pitch - curr_pitch)
 
-    def harmony_octave_penalty(self, prev_s, s):
-        '''
-        Implements small/medium punishment for the harmony jumping between octaves 
-        ie. encouraging the harmony to be much smoother
-        '''
-        # get the pitches including the octave
-        prev_pitch = (prev_s >> 7) & 0xF
-        curr_pitch = (s       >> 7) & 0xF
-
-        # get absolute value of how far away the previous and current pitches are (in semitones)
-        diff = abs(prev_pitch - curr_pitch)
-
-        # no penalty for within an octave
-        if diff <= 12:
-            return 0.0
-        # small penalty if within 2 octaves
-        elif diff <= 24:
-            return -0.5
-        # larger penalty greater than 2 octave differences
-        else:
-            return -1.0
+    # no penalty for within an octave
+    if diff == 0:
+      return 0.0
+    # small penalty if within 2 octaves
+    elif diff == 1:
+      return -0.5
+    # larger penalty greater than 2 octave differences
+    else:
+      return -1.0
         
 
-    def duration_reward(self, melody_note, harmony_note):
-        '''
-        Rewards the harmony for matching the melody duration according to their bins
-        NOTE: the binned durations for melodies and harmonies differ
-        '''
-        melody_duration = (melody_note  >> 7) & 0x3
-        harmony_duration = (harmony_note >> 7) & 0x3
+  def duration_reward(self, melody_note, harmony_note):
+    '''
+    Rewards the harmony for matching the melody duration according to their bins
+    NOTE: the binned durations for melodies and harmonies differ
+    '''
+    melody_duration = (melody_note  >> 0) & 0x3
+    harmony_duration = (harmony_note >> 0) & 0x3
         
-        # rewards for harmony note matching the duration of the melody (in bin)
-        if melody_duration == harmony_duration:
-            return 1
-        else: 
-            return 0
+    # rewards for harmony note matching the duration of the melody (in bin)
+    if melody_duration == harmony_duration:
+      return 1
+    else: 
+      return 0    
 
-    def viterbi(self, observations):
-        """
-        observations = the melody notes
-        states = the harmony/chords we want to guess
+  def viterbi(self, observations):
+    # initialize variables
+    T = len(observations); N = len(self.__states)
+    V = np.full((T, N), -np.inf, dtype=np.float64)
+    back = np.zeros((T, N), dtype=np.int32)
+    obs_ix = np.array([self.__obs_map[o] for o in observations])
 
-        Returns:
-            best_path -> most likely note sequence
-            best_log_prob -> log-probability of that sequence
-        """
+    # t = 0
+    V[0, :] = self.__log_pi + self.__log_O[:, obs_ix[0]]
 
-        T = len(observations)  # number of time steps (melody notes)
-        states = self.states  # all possible hidden states (notes)
+    # t = 1 to T
+    for t in tqdm(range(1, T), total=T):
+      temp = V[t - 1, :].reshape(-1, 1) + self.__log_T
+      back[t, :] = np.argmax(temp, axis=0)
+      base_score = temp[back[t, :], np.arange(N)]
 
-        # V[t][state] = best log-probability of any path that ends in state at time t
-        V = []
+      # get the current melody note
+      melody_note = observations[t]
 
-        # back[t][state] = which previous state gives that best path
-        back = []
+      # duration reward
+      dur_reward = np.array([
+          self.duration_reward(
+              melody_note,
+              s
+          ) for s in self.__states
+      ])
 
-        # 1. Initialization (t = 0)
-        # For the first note, the best score is: log P(start in state s) + log P(observation | state s)
-        first_obs = observations[0]
-        V0 = {}
-        back0 = {}
+      # interval reward multiplier
+      interval_reward_multiplier = np.array([
+          self.interval_consonance_reward(
+              melody_note,
+              s
+          ) for s in self.__states
+      ])
 
-        for s in states:
-            # how well this chord explains the first melody note
-            p_start = self.start_prob.get(s, 1e-12)
-            p_emit = self.emit_prob.get(s, {}).get(first_obs, 1e-12)
-            
-            # convert to log probabilities
-            V0[s] = self._safe_log(p_start) + self._safe_log(p_emit)
 
-            # no previous state at the first time step
-            back0[s] = None
+      # jump penalty 
+      jump_penalty = np.array([
+          self.harmony_octave_penalty(
+              back[t, self.__states_map[s]],
+              s
+          )
+          for s in self.__states
+      ])
 
-        V.append(V0)
-        back.append(back0)
+      # combine rewards into score
+      score = (
+        base_score
+        + self.__log_O[:, obs_ix[t]]
+        + dur_reward
+        + jump_penalty
+      )
 
-        # 2. Recursion (t = 1 to T-1)
-        # For every future note, we try all possible previous chords and pick the best-scoring path.
-        # best_score = previous best score + log P(transition prev_s -> s) + log P(emission of current note | s)
-        # Get the best score and which prev state gave that score
-        for t in tqdm(range(1, T)):
-            obs = observations[t]  # current melody note
-            V_t = {}
-            back_t = {}
+      score *= interval_reward_multiplier
 
-            for s in states:  # s = current chord
-                best_score = LOG_ZERO
-                best_prev_state = None
+      V[t, :] = score
 
-                # try every possible previous chord
-                for prev_s in states:
-                    # transition probability: prev chord -> current chord
-                    p_trans = self.trans_prob.get(prev_s, {}).get(s, 0.0)
+    # termination
+    last_ix = np.argmax(V[-1, :])
+    best_log_prob = V[-1, last_ix]
 
-                    # emission probability: how well current chord explains current note
-                    p_emit = self.emit_prob.get(s, {}).get(obs, 1e-12)
+    path = np.zeros(T, dtype=np.int32)
+    path[T - 1] = last_ix
 
-                    # calculates reward multiplier based on interval between melody and harmony
-                    interval_reward_multiplier = self.interval_consonance_reward(obs, s)   
-                    duration_reward = self.duration_reward(obs, s) 
-                    jump_penalty = self.harmony_octave_penalty(prev_s, s)
+    # backtracking to find best path
+    for t in range(T - 2, -1, -1):
+      path[t] = back[t + 1, path[t + 1]]
+    
+    best_path = self.__states[path]
+    return best_path, best_log_prob
 
-                    # total score for ending in state s via prev_s
-                    score = (
-                            V[t - 1][prev_s]
-                            + self._safe_log(p_trans)
-                            + self._safe_log(p_emit)
-                            + self._safe_log(duration_reward)
-                    )
-                    score = (
-                        V[t-1][prev_s]
-                        + self._safe_log(p_trans)
-                        + self._safe_log(p_emit)
-                        + duration_reward
-                        + jump_penalty
-                    )
-
-                    score *= interval_reward_multiplier
-
-                    # keep the best-scoring previous state
-                    if score > best_score:
-                        best_score = score
-                        best_prev_state = prev_s
-
-                # store best score and best previous note 
-                V_t[s] = best_score
-                back_t[s] = best_prev_state
-
-            V.append(V_t)
-            back.append(back_t)
-
-        # 3. Termination: Pick the best-scoring final note at time T-1.
-        last_time = T - 1
-        best_last_state = None
-        best_log_prob = LOG_ZERO
-
-        for s in states:
-            score = V[last_time][s]
-            if score > best_log_prob:
-                best_log_prob = score
-                best_last_state = s
-
-        # 4. Backtracking to get full best path
-        # Starting from the best final chord, walk backwards using the stored backpointers to recover
-        # the entire musical sequence.
-        best_path = [None] * T
-        best_path[last_time] = best_last_state
-
-        # follow the arrows backwards in time
-        for t in range(last_time, 0, -1):
-            best_path[t - 1] = back[t][best_path[t]]
-
-        return best_path, best_log_prob
 
 if __name__ == '__main__':
-    pass
+  hmm = HMM()
+  dp = DP(train=False)
+  dp.init_note_sequences()
+
+  song_ix = np.random.randint(dp.num_songs)
+
+  violin_sequence = dp.violin_sequences[np.random.randint(dp.num_songs)]
+  obs = [DP.hash_note(n, False) for n in violin_sequence]
+    
+  best_path, best_log_prob = hmm.viterbi(obs)
+  print(best_log_prob)
+  print(f"{', '.join([str(x) for x in best_path])}")
+
+
