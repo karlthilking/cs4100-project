@@ -1,11 +1,6 @@
-from threading import Thread
 import numpy as np
-from numpy import ndarray
-from concurrent.futures import as_completed, ProcessPoolExecutor, ThreadPoolExecutor
-from typing import List, Dict, Any 
 from data_processor import DataProcessor as DP
 from tqdm import tqdm
-import time
 
 class HMM:
   def __init__(self, path='HMM_params'):
