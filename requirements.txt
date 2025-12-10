@@ -1,0 +1,6 @@
+numpy
+pretty_midi
+tqdm
+music21
+matplotlib
+seaborn
