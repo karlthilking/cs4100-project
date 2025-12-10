@@ -11,5 +11,5 @@ Our project's purpose was to develop an AI System capable of generating harmonie
 **hmm.py**
   - Implements the Viterbi algortihm that takes a violin melody as input and identifies the most likely accompanying piano sequence according to the parameters of our Hidden Markov Model.
 
-**generation.py**
+**generation_analysis.py**
   - Decrypts the path of piano notes provided by Viterbi decoding and produces the resulting song (as a midi file) and complementary music sheet.
