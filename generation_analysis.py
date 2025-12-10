@@ -1,46 +1,21 @@
 from typing import List, Dict, Tuple
 import os
 import random
-
 import numpy as np
 import pretty_midi as pm
 import matplotlib.pyplot as plt
 import seaborn as sns
 from music21 import stream, note, instrument, tempo
-
 from data_processor import DataProcessor
 from hmm import HMM
-
-
-def load_hmm_params(path: str = "HMM_params"):
-    T_arr = np.load(os.path.join(path, "T.npy"))
-    O_arr = np.load(os.path.join(path, "O.npy"))
-    pi_arr = np.load(os.path.join(path, "pi.npy"))
-    states = np.load(os.path.join(path, "states.npy")).tolist()
-    obs = np.load(os.path.join(path, "obs.npy")).tolist()
-
-    state_list = list(states)
-    obs_list = list(obs)
-
-    T_dict, O_dict, pi_dict = {}, {}, {}
-
-    for i, s in enumerate(state_list):
-        row = T_arr[i]
-        T_dict[s] = {state_list[j]: float(val) for j, val in enumerate(row) if val > 0}
-
-    for i, s in enumerate(state_list):
-        row = O_arr[i]
-        O_dict[s] = {obs_list[k]: float(val) for k, val in enumerate(row) if val > 0}
-
-    for i, s in enumerate(state_list):
-        if pi_arr[i] > 0:
-            pi_dict[s] = float(pi_arr[i])
-
-    return T_dict, O_dict, pi_dict, state_list, obs_list
-
+from collections import Counter
 
 
 def decode_note(note_hash: int) -> Tuple[int, int, float]:
+    """
+    Decode a hashed note representation into its components: pitch, velocity, duration.
+    Each field is unpacked from specific bit positions of the note_hash and mapped back to real MIDI values
+    """
     dur_bin      =  note_hash        & 0x3
     octave_bin   = (note_hash >> 2)  & 0x3
     velo_bin     = (note_hash >> 4)  & 0x3
@@ -57,8 +32,10 @@ def decode_note(note_hash: int) -> Tuple[int, int, float]:
 
     return pitch, velocity, duration
 
-
 def sequence_to_midi(state_sequence: List[int], out_path: str):
+    """
+    Convert a sequence of hashed HMM states into a MIDI file using decoded pitch, velocity, and duration values
+    """
     midi = pm.PrettyMIDI()
     inst = pm.Instrument(program=0)
 
@@ -72,8 +49,10 @@ def sequence_to_midi(state_sequence: List[int], out_path: str):
     midi.instruments.append(inst)
     midi.write(out_path)
 
-
 def sequence_to_sheet(state_sequence: List[int], out_path: str):
+    """
+     Convert a sequence of hashed states into a MusicXML score by decoding pitch and duration
+     """
     s = stream.Stream()
     s.append(instrument.Piano())
     s.append(tempo.MetronomeMark(number=120))
@@ -90,16 +69,20 @@ def sequence_to_sheet(state_sequence: List[int], out_path: str):
 
     s.write("musicxml", fp=out_path)
 
-
 def get_pitch_from_hash(h: int) -> int:
+    """
+    Extract the MIDI pitch from a hashed note representation
+    """
     return decode_note(h)[0]
-
 
 def generate_harmony(
     observations: List[int],
     midi_out: str,
     sheet_out: str,
 ):
+    """
+    Run Viterbi decoding on a melody to generate the most likely harmony, then export it as both MIDI and MusicXML
+    """
     hmm = HMM(path="HMM_params")
     best_path, best_log_prob = hmm.viterbi(observations)
 
@@ -108,9 +91,10 @@ def generate_harmony(
 
     return best_path, best_log_prob
 
-
-
 def run_analysis(dp_test, test_idx, observations, best_path, folder):
+    """
+    Compare the generated harmony to the original accompaniment for one test melody and create some analysis plots
+    """
     violin_seqs = dp_test.violin_sequences
     piano_seqs = dp_test.piano_sequences
 
@@ -143,7 +127,7 @@ def run_analysis(dp_test, test_idx, observations, best_path, folder):
 
     # Melody vs Generated harmony
     plt.figure(figsize=(12, 4))
-    plt.plot(melody, label="Violin Melody)", color="darkblue")
+    plt.plot(melody, label="Violin Melody", color="darkblue")
     plt.plot(gen_h, label="Generated Piano Accompaniment Harmony", color="darkgreen")
     plt.title("Melody vs Generated Harmony")
     plt.xlabel("Note index")
@@ -153,32 +137,62 @@ def run_analysis(dp_test, test_idx, observations, best_path, folder):
     plt.savefig(os.path.join(folder, "melody_vs_generated.png"), dpi=300)
     plt.close()
 
-    T_arr = np.load("HMM_params/T.npy")
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(T_arr, xticklabels=False, yticklabels=False)
-    plt.title("HMM Transition Probability Matrix")
-    plt.xlabel("Next state")
-    plt.ylabel("Previous state")
+    # Melody pitch vs Harmony pitch (True vs Generated)
+    min_pitch = min(melody + true_h + gen_h)
+    max_pitch = max(melody + true_h + gen_h)
+    plt.figure(figsize=(6, 6))
+    plt.scatter(melody, true_h, s=15, alpha=0.6, label="Original Harmony")
+    plt.scatter(melody, gen_h, s=15, alpha=0.6, label="Generated Harmony")
+    plt.plot([min_pitch, max_pitch], [min_pitch, max_pitch],
+             linestyle="--", linewidth=1, label="Unison line")
+    plt.xlabel("Melody pitch (MIDI)")
+    plt.ylabel("Harmony pitch (MIDI)")
+    plt.title("Melody vs Harmony Pitch")
+    plt.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(folder, "transition_matrix.png"), dpi=300)
+    plt.savefig(os.path.join(folder, "melody_vs_harmony_scatter.png"), dpi=300)
+    plt.close()
+
+    # Interval (harmony - melody) distributions
+    true_intervals = [h - m for m, h in zip(melody, true_h)]
+    gen_intervals  = [h - m for m, h in zip(melody, gen_h)]
+    plt.figure(figsize=(10, 4))
+    bins = np.arange(-24, 25)
+    sns.histplot(true_intervals, bins=bins, stat="probability",
+                 element="step", fill=False, label="Original Harmony")
+    sns.histplot(gen_intervals, bins=bins, stat="probability",
+                 element="step", fill=False, label="Generated Harmony")
+    plt.xlabel("Interval (Harmony - Melody, semitones)")
+    plt.ylabel("Probability")
+    plt.title("Interval Distribution: Melody to Harmony")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(folder, "interval_distribution.png"), dpi=300)
     plt.close()
 
 
 def main():
+    """
+    Select a random test melody, generate its harmony using the HMM,
+    save MIDI/score outputs and analysis plots, and write run metadata
+    """
     dp_test = DataProcessor(train=False)
     dp_test.init_note_sequences()
 
     violin_seqs = dp_test.violin_sequences
 
     non_empty_indices = [i for i, seq in enumerate(violin_seqs) if len(seq) > 0]
-    test_idx = random.choice(non_empty_indices)
 
+    # Pick a random non-empty melody from the dataset
+    test_idx = random.choice(non_empty_indices)
     print("Randomly selected test melody idx:", test_idx)
 
     folder = f"run_{test_idx:04d}"
     os.makedirs(folder, exist_ok=True)
 
     raw_melody = violin_seqs[test_idx]
+
+    # Hash melody notes into observation symbols for the HMM
     observations = [DataProcessor.hash_note(n, is_piano=False) for n in raw_melody]
 
     midi_path = os.path.join(folder, "harmony.mid")
@@ -190,6 +204,7 @@ def main():
         sheet_out=sheet_path,
     )
 
+    # Save run metadata
     with open(os.path.join(folder, "metadata.txt"), "w") as f:
         f.write(f"test_idx = {test_idx}\n")
         f.write(f"melody_length = {len(observations)}\n")
