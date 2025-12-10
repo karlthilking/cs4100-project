@@ -13,3 +13,6 @@ Our project's purpose was to develop an AI System capable of generating harmonie
 
 **generation_analysis.py**
   - Decrypts the path of piano notes provided by Viterbi decoding and produces the resulting song (as a midi file) and complementary music sheet.
+
+**requirement.txt**
+  - List of all external libraries needed.
