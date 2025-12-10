@@ -1,0 +1,3 @@
+test_idx = 711
+melody_length = 394
+best_log_prob = -2802.9249866002774
